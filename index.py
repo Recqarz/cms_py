@@ -6,6 +6,9 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import (
+    NoSuchElementException, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
+)
 from PIL import Image
 from dotenv import load_dotenv
 import pytesseract
@@ -17,6 +20,19 @@ import os
 import requests
 import platform
 import subprocess
+import logging
+
+
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("server.log"),
+        logging.StreamHandler()
+    ]
+)
 
 
 # AWS Configuration
@@ -34,108 +50,70 @@ s3_client = boto3.client('s3',
 app = Flask(__name__)
 CORS(app)  # Allow CORS for all origins
 
+def log_exception(e, message=""):
+    """Log exceptions with an optional message."""
+    logging.error(f"{message}: {e}", exc_info=True)
+
 def upload_to_s3(file_path, bucket_name, s3_key):
-    """Uploads a file to AWS S3 and returns its public URL."""
+    logging.debug(f"Uploading {file_path} to S3 bucket {bucket_name} with key {s3_key}")
     try:
         s3_client.upload_file(file_path, bucket_name, s3_key)
         s3_url = f"https://{bucket_name}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
+        logging.info(f"Successfully uploaded to S3. URL: {s3_url}")
         return s3_url
     except Exception as e:
-        raise Exception(f"Failed to upload to S3: {str(e)}")
+        log_exception(e, "Failed to upload to S3")
+        raise
 
 MAX_RETRIES = 5  # Maximum number of retries for PDF download
 
 def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_number, cookies):
     retries = 0
-    pdf_saved = False
-
-    while retries < MAX_RETRIES and not pdf_saved:
+    while retries < MAX_RETRIES:
         try:
-            # Ensure the order element is in the viewport before clicking
-            driver.execute_script("arguments[0].scrollIntoView(true);", order_element)
-            time.sleep(1)  # Optional wait to ensure the element is in view
-
-            # Wait for the element to be clickable
-            print(f"Waiting for order element {index} to be clickable...")
-            WebDriverWait(driver, 20).until(EC.element_to_be_clickable(order_element))
-
-            # Wait for any modal or overlay to disappear before clicking
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.invisibility_of_element_located((By.CSS_SELECTOR, ".modal-overlay, .loading-overlay, .some-other-overlay"))
-                )
-            except TimeoutException:
-                print("Overlay still visible, continuing with click.")
-
-            # Click the order element using JavaScript to ensure it works even if an overlay is present
+            logging.debug(f"Attempting to download PDF for order {index}, retry {retries + 1}")
             driver.execute_script("arguments[0].click();", order_element)
-
-            # Wait for the modal body to be visible and fully loaded
-            modal_body = WebDriverWait(driver, 20).until(
-                EC.visibility_of_element_located((By.ID, "modal_order_body"))
-            )
-
-            # Ensure the object element is loaded and contains the PDF link
-            object_element = WebDriverWait(modal_body, 20).until(
-                EC.presence_of_element_located((By.TAG_NAME, "object"))
-            )
+ 
+            modal_body = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "modal_order_body")))
+            object_element = modal_body.find_element(By.TAG_NAME, "object")
             pdf_link = object_element.get_attribute("data")
             if not pdf_link:
-                raise ValueError("PDF link not found in modal.")
-
-            # Define PDF path
+                raise ValueError("PDF link not found")
+ 
             pdf_filename = f"order_{index}.pdf"
             pdf_path = os.path.join(cnr_directory, pdf_filename)
-
-            # Convert Selenium cookies to a string for headers
-            cookies_string = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
-
-            # Add headers to simulate a browser request
+ 
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 ),
-                "Referer": "https://services.ecourts.gov.in/ecourtindia_v6/",
-                "Accept": "application/pdf",
-                "Cookie": cookies_string,
+                "Cookie": cookies,
             }
-
-            # Download the PDF using requests
+ 
             response = requests.get(pdf_link, headers=headers, stream=True, timeout=20)
-
-            # Check if the download was successful
             if response.status_code == 200:
                 with open(pdf_path, "wb") as pdf_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         pdf_file.write(chunk)
-
-                pdf_saved = True  # Mark as saved successfully
-
-                # Upload to S3
+ 
                 s3_key = f"{cnr_number}/intrim_orders/{pdf_filename}"
                 s3_url = upload_to_s3(pdf_path, AWS_S3_BUCKET_NAME, s3_key)
-
-                # After uploading, delete the file from local storage
                 os.remove(pdf_path)
-
-                return s3_url, True  # Return the S3 URL and success status
+                logging.info(f"PDF downloaded and uploaded successfully: {s3_url}")
+                return s3_url
             else:
-                print(f"Failed to download PDF. Status code: {response.status_code} - {pdf_link}")
+                logging.warning(f"Failed to fetch PDF. HTTP status code: {response.status_code}")
                 retries += 1
-                time.sleep(2)  # Wait before retrying
-        except (
-            StaleElementReferenceException,
-            NoSuchElementException,
-            TimeoutException,
-            ValueError,
-            Exception
-        ) as e:
-            print(f"Error downloading order {index}: {e}")
+                time.sleep(2)
+ 
+        except (ElementClickInterceptedException, TimeoutException, ValueError) as e:
+            log_exception(e, f"Error on attempt {retries + 1} for order {index}")
             retries += 1
-            time.sleep(2)  # Wait before retrying
-
-    return None, False
+            time.sleep(2)
+ 
+    logging.error(f"Exceeded maximum retries for downloading PDF for order {index}")
+    return None
 
 
 
@@ -174,21 +152,26 @@ def launch_browser(headless=True):
     options.binary_location = executable_path
     if headless:
         options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-popup-blocking")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--window-size=1920,1080")
 
     # Launch browser
     browser = webdriver.Chrome(options=options)
+    logging.info("Browser launched successfully")
     return browser
 
 
 def get_case_details_and_orders(cnr_number, base_path):
+    logging.info(f"Fetching case details for CNR number: {cnr_number}")
+
     driver = launch_browser(headless=True)  # You can change headless=True if needed
     try:
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
+        logging.debug("Navigated to eCourts website")
 
         # Wait for CNR input field
         WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "cino")))
@@ -202,6 +185,7 @@ def get_case_details_and_orders(cnr_number, base_path):
         captcha_element = driver.find_element(By.ID, "captcha_image")
         captcha_path = os.path.join(base_path, "captcha.png")
         captcha_element.screenshot(captcha_path)
+        logging.debug(f"Captcha saved to {captcha_path}")
 
         img = Image.open(captcha_path)
 
@@ -215,15 +199,18 @@ def get_case_details_and_orders(cnr_number, base_path):
 
         # Perform OCR to get the CAPTCHA text
         captcha_text = pytesseract.image_to_string(img).strip()
+        logging.debug(f"Captcha solved: {captcha_text}")
 
         # Submit CAPTCHA
         captcha_input_field = driver.find_element(By.ID, "fcaptcha_code")
         captcha_input_field.send_keys(captcha_text)
         search_button = driver.find_element(By.ID, "searchbtn")
         search_button.click()
+        logging.info("Captcha submitted and search initiated")
 
         # Wait for case details to load
-        WebDriverWait(driver, 15).until(EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table")))
+        WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table")))
+        logging.info("Case details table loaded successfully")
 
         # Extract case details
         details = {}
@@ -353,10 +340,7 @@ def get_case_details_and_orders(cnr_number, base_path):
             if "Invalid Captcha" in error_message:
                 driver.quit()  # Close the driver
                 time.sleep(1)  # Add a small delay before retrying
-                if retries < MAX_RETRIES: 
-                    return get_case_details_and_orders(cnr_number, base_path)  # Retry process
-                else:
-                    return {'error': 'Max retries reached for CAPTCHA'}  # Retry process for the same CNR number
+                return get_case_details_and_orders(cnr_number, base_path)  # Retry process for the same CNR number
         except Exception as inner_exception:
             print(f"Error while checking CAPTCHA: {inner_exception}")
 
@@ -372,6 +356,7 @@ def get_case_details_and_orders(cnr_number, base_path):
             return {'error': 'An unexpected error occurred.'}
     finally:
         driver.quit()
+        logging.debug("Browser closed")
 
 
 
@@ -391,6 +376,7 @@ def get_case_details_status():
             # Define base_path here
             custom_base_path = r"./"  # Set the base path for saving files
             result = get_case_details_and_orders(cnr_number, custom_base_path)
+            logging.debug(f"Case details result: {result}")
             return jsonify(result)
 
         except Exception as e:
