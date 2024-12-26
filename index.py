@@ -170,9 +170,16 @@ def launch_browser(headless=True):
     browser = webdriver.Chrome(options=options)
     return browser
 
-def get_case_details_and_orders(cnr_number, base_path):
-    
+import os
+import time
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from PIL import Image
+import pytesseract
+from selenium.common.exceptions import NoSuchElementException
 
+def get_case_details_and_orders(cnr_number, base_path):
     driver = launch_browser(headless=True)  # You can change headless=True if needed
     try:
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
@@ -191,7 +198,16 @@ def get_case_details_and_orders(cnr_number, base_path):
         captcha_element.screenshot(captcha_path)
 
         img = Image.open(captcha_path)
-        pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
+
+        # Set the tesseract path based on the OS
+        if platform.system() == 'Windows':  # Windows OS
+            pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
+        elif platform.system() == 'Linux':  # Linux/Ubuntu OS
+            pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+        else:
+            raise EnvironmentError(f"Unsupported OS: {platform.system()}")
+
+        # Perform OCR to get the CAPTCHA text
         captcha_text = pytesseract.image_to_string(img).strip()
 
         # Submit CAPTCHA
@@ -215,7 +231,6 @@ def get_case_details_and_orders(cnr_number, base_path):
                     details[label] = value
 
         # Extract other details (status, parties, acts, FIR, history, etc.)
-        
         def extract_table_data(selector):
             try:
                 time.sleep(2)
@@ -257,8 +272,6 @@ def get_case_details_and_orders(cnr_number, base_path):
                 order_number = cells[0].text.strip()  # This will get the order number (1)
                 order_date = cells[1].text.strip()     # This will get the order date (27-07-2022)
 
-                # print("Order Number:", order_number)
-                # print("Order Date:", order_date)
                 order_element = cells[2].find_element(By.TAG_NAME, 'a')
 
                 cookies = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
@@ -276,13 +289,14 @@ def get_case_details_and_orders(cnr_number, base_path):
 
             except Exception as e:
                 print(f"Error downloading order {index}: {e}")
+        
         # Verify the downloaded PDFs
         total_orders = len(rows) - 1  # Exclude the header row
         verify_pdf_downloads(cnr_directory, total_orders)
-                
+
         try:
             if os.path.exists(cnr_directory):
-        # Walk through the directory tree from bottom to top
+                # Walk through the directory tree from bottom to top
                 for root, dirs, files in os.walk(cnr_directory, topdown=False):
                     for file in files:
                         file_path = os.path.join(root, file)
@@ -299,18 +313,14 @@ def get_case_details_and_orders(cnr_number, base_path):
                         print(f"Deleted subdirectory: {dir_path}")
                     except Exception as e:
                         print(f"Failed to delete directory {dir_path}: {e}")
-        
-        # Delete the main directory itself
+
+                # Delete the main directory itself
                 os.rmdir(cnr_directory)
-                # print(f"Successfully deleted directory: {cnr_directory}")
             parent_directory = os.path.dirname(cnr_directory)  # Get parent directory path
             if os.path.exists(parent_directory):
                 os.rmdir(parent_directory)
-                # print(f"Successfully deleted parent directory: {parent_directory}")
         except Exception as e:
             print(f"Error while deleting directory {cnr_directory}: {e}")
-
-
 
         return {
             'cnr_number': cnr_number,
@@ -323,7 +333,7 @@ def get_case_details_and_orders(cnr_number, base_path):
             'Case History': case_history,
             'Case Transfer Details': case_transfer_details,
             'status': 'complete',
-            's3_links': s3_links # Return the S3 links for the downloaded PDFs
+            's3_links': s3_links  # Return the S3 links for the downloaded PDFs
         }
 
     except Exception as e:
@@ -347,17 +357,13 @@ def get_case_details_and_orders(cnr_number, base_path):
                 EC.visibility_of_element_located((By.CSS_SELECTOR, "div#history_cnr span"))
             ).text
             if "This Case Code does not exists" in record_not_found_message:
-                return {'error': 'Invaild_cnr'}
+                return {'error': 'Invalid_cnr'}
         except Exception as inner_exception:
             print(f"Error while checking 'This Case Code does not exists': {inner_exception}")
-            return jsonify({"error": "Different_format"}), 200
-            # return jsonify({"error": "An unexpected error occurred. Please try again later ji ha."}), 500
-
-        # If the table or message is not found, return a general error
-        return {'error': 'An unexpected error occurred.'}
-    # , 400
+            return {'error': 'An unexpected error occurred.'}
     finally:
         driver.quit()
+
 
 
 @app.route('/get_case_details_status', methods=['POST'])
