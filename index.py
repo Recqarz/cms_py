@@ -62,8 +62,6 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             # Get PDF link from the modal (Ensure the link is correct)
             object_element = modal_body.find_element(By.TAG_NAME, "object")
             pdf_link = object_element.get_attribute("data")
-            # print("PDF link:", pdf_link)
-
             if not pdf_link:
                 raise ValueError("PDF link not found")
 
@@ -72,9 +70,7 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             pdf_path = os.path.join(cnr_directory, pdf_filename)
 
             # Convert Selenium cookies to a string for headers
-            cookies_string = "; ".join(
-                [f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()]
-            )
+            cookies_string = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
 
             # Add headers to simulate a browser request
             headers = {
@@ -88,14 +84,14 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             }
 
             # Download the PDF using requests
-            response = requests.get(pdf_link, headers=headers, stream=True)
+            response = requests.get(pdf_link, headers=headers, stream=True, timeout=20)
 
             # Check if the download was successful
             if response.status_code == 200:
                 with open(pdf_path, "wb") as pdf_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         pdf_file.write(chunk)
-                # print(f"PDF saved: {pdf_path}")
+
                 pdf_saved = True  # Mark as saved successfully
 
                 # Upload to S3
@@ -105,12 +101,9 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
                 # After uploading, delete the file from local storage
                 os.remove(pdf_path)
 
-                # print(f"Deleted local file: {pdf_path}")
                 return s3_url, True  # Return the S3 URL and success status
             else:
-                print(
-                    f"Failed to download PDF. Status code: {response.status_code} - {pdf_link}"
-                )
+                print(f"Failed to download PDF. Status code: {response.status_code} - {pdf_link}")
                 retries += 1
                 time.sleep(2)  # Wait before retrying
         except (
@@ -123,7 +116,7 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             retries += 1
             time.sleep(2)  # Wait before retrying
 
-    return None, False  # Return None and failure status after retries exceeded
+    return None, False
 
 def verify_pdf_downloads(cnr_directory, total_orders):
     missing_pdfs = []
