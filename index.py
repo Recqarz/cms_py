@@ -52,7 +52,11 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
     while retries < MAX_RETRIES and not pdf_saved:
         try:
             # Re-find the order element just before clicking it 
-            driver.execute_script("arguments[0].click();", order_element)
+            # driver.execute_script("arguments[0].click();", order_element)
+            driver.execute_script("arguments[0].scrollIntoView();", order_element)
+            time.sleep(1)  # Optional wait
+            WebDriverWait(driver, 20).until(EC.element_to_be_clickable(order_element))
+            driver.execute_script("arguments[0].click();", order_element) 
 
             # Wait for modal and PDF link
             modal_body = WebDriverWait(driver, 20).until(
