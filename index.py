@@ -54,31 +54,34 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             # Ensure the order element is in the viewport before clicking
             driver.execute_script("arguments[0].scrollIntoView(true);", order_element)
             time.sleep(1)  # Optional wait to ensure the element is in view
-            
+
             # Wait for the element to be clickable
+            print(f"Waiting for order element {index} to be clickable...")
             WebDriverWait(driver, 20).until(EC.element_to_be_clickable(order_element))
 
-            # If an overlay or modal exists, wait for it to disappear
+            # Wait for any modal or overlay to disappear before clicking
             try:
                 WebDriverWait(driver, 10).until(
-                    EC.invisibility_of_element_located((By.CSS_SELECTOR, ".modal-overlay"))
+                    EC.invisibility_of_element_located((By.CSS_SELECTOR, ".modal-overlay, .loading-overlay, .some-other-overlay"))
                 )
             except TimeoutException:
                 print("Overlay still visible, continuing with click.")
 
-            # Click the order element using JavaScript in case it is covered by another element
+            # Click the order element using JavaScript to ensure it works even if an overlay is present
             driver.execute_script("arguments[0].click();", order_element)
 
-            # Wait for modal to appear and fetch the PDF link
+            # Wait for the modal body to be visible and fully loaded
             modal_body = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.ID, "modal_order_body"))
+                EC.visibility_of_element_located((By.ID, "modal_order_body"))
             )
 
-            # Get PDF link from the modal
-            object_element = modal_body.find_element(By.TAG_NAME, "object")
+            # Ensure the object element is loaded and contains the PDF link
+            object_element = WebDriverWait(modal_body, 20).until(
+                EC.presence_of_element_located((By.TAG_NAME, "object"))
+            )
             pdf_link = object_element.get_attribute("data")
             if not pdf_link:
-                raise ValueError("PDF link not found")
+                raise ValueError("PDF link not found in modal.")
 
             # Define PDF path
             pdf_filename = f"order_{index}.pdf"
@@ -133,6 +136,7 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             time.sleep(2)  # Wait before retrying
 
     return None, False
+
 
 
 def verify_pdf_downloads(cnr_directory, total_orders):
@@ -349,7 +353,10 @@ def get_case_details_and_orders(cnr_number, base_path):
             if "Invalid Captcha" in error_message:
                 driver.quit()  # Close the driver
                 time.sleep(1)  # Add a small delay before retrying
-                return get_case_details_and_orders(cnr_number, base_path)  # Retry process for the same CNR number
+                if retries < MAX_RETRIES: 
+                    return get_case_details_and_orders(cnr_number, base_path)  # Retry process
+                else:
+                    return {'error': 'Max retries reached for CAPTCHA'}  # Retry process for the same CNR number
         except Exception as inner_exception:
             print(f"Error while checking CAPTCHA: {inner_exception}")
 
