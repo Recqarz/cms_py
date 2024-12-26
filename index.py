@@ -51,19 +51,30 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
 
     while retries < MAX_RETRIES and not pdf_saved:
         try:
-            # Re-find the order element just before clicking it 
-            # driver.execute_script("arguments[0].click();", order_element)
-            driver.execute_script("arguments[0].scrollIntoView();", order_element)
-            time.sleep(1)  # Optional wait
+            # Ensure the order element is in the viewport before clicking
+            driver.execute_script("arguments[0].scrollIntoView(true);", order_element)
+            time.sleep(1)  # Optional wait to ensure the element is in view
+            
+            # Wait for the element to be clickable
             WebDriverWait(driver, 20).until(EC.element_to_be_clickable(order_element))
-            driver.execute_script("arguments[0].click();", order_element) 
 
-            # Wait for modal and PDF link
+            # If an overlay or modal exists, wait for it to disappear
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.invisibility_of_element_located((By.CSS_SELECTOR, ".modal-overlay"))
+                )
+            except TimeoutException:
+                print("Overlay still visible, continuing with click.")
+
+            # Click the order element using JavaScript in case it is covered by another element
+            driver.execute_script("arguments[0].click();", order_element)
+
+            # Wait for modal to appear and fetch the PDF link
             modal_body = WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.ID, "modal_order_body"))
             )
 
-            # Get PDF link from the modal (Ensure the link is correct)
+            # Get PDF link from the modal
             object_element = modal_body.find_element(By.TAG_NAME, "object")
             pdf_link = object_element.get_attribute("data")
             if not pdf_link:
@@ -115,12 +126,14 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
             NoSuchElementException,
             TimeoutException,
             ValueError,
+            Exception
         ) as e:
             print(f"Error downloading order {index}: {e}")
             retries += 1
             time.sleep(2)  # Wait before retrying
 
     return None, False
+
 
 def verify_pdf_downloads(cnr_directory, total_orders):
     missing_pdfs = []
