@@ -147,7 +147,7 @@ def launch_browser(headless=True):
         executable_path = "/usr/bin/google-chrome"
         # Launch Xvfb for Linux headless operation
         subprocess.Popen(
-            ["Xvfb", ":99", "-screen", "0", "1280x720x24"], 
+            ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"], 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE
         )
@@ -170,14 +170,6 @@ def launch_browser(headless=True):
     browser = webdriver.Chrome(options=options)
     return browser
 
-import os
-import time
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from PIL import Image
-import pytesseract
-from selenium.common.exceptions import NoSuchElementException
 
 def get_case_details_and_orders(cnr_number, base_path):
     driver = launch_browser(headless=True)  # You can change headless=True if needed
