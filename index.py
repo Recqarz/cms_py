@@ -15,6 +15,9 @@ import boto3
 import tempfile
 import os
 import requests
+import platform
+import subprocess
+
 
 # AWS Configuration
 load_dotenv()
@@ -135,16 +138,44 @@ def verify_pdf_downloads(cnr_directory, total_orders):
     # else:
     #     print("All PDFs were successfully downloaded.")
 
+def launch_browser(headless=False):
+    executable_path = None
 
+    # Set the browser executable path based on the operating system
+    if platform.system() == "Windows":
+        executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    elif platform.system() == "Linux":
+        executable_path = "/usr/bin/google-chrome"  # Adjust if using Chromium
 
-def get_case_details_and_orders(cnr_number, base_path):
-    options = Options()
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920x1080")
+        # Launch Xvfb for headless operation
+        subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1280x720x24"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # Ensure DISPLAY environment variable is set
+        os.environ['DISPLAY'] = os.getenv('DISPLAY', ':99')
+    elif platform.system() == "Darwin":
+        executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    else:
+        raise Exception("Unsupported operating system")
+
+    # Launch the browser with the specified options
+    options = webdriver.ChromeOptions()
+    options.headless = headless
+    options.binary_location = executable_path
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-setuid-sandbox")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-popup-blocking")
     options.add_argument("--disable-dev-shm-usage")
 
-    driver = webdriver.Chrome(options=options)
+    # Initialize the browser
+    browser = webdriver.Chrome(options=options)
+    return browser
+
+def get_case_details_and_orders(cnr_number, base_path):
+    
+
+    driver = launch_browser(headless=False)  # You can change headless=True if needed
     try:
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
 
@@ -355,7 +386,7 @@ def get_case_details_status():
         
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({"status": "ok", "message": "The app is running good."}), 200
+    return jsonify({"status": "ok", "message": "Api running."}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)
