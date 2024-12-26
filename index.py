@@ -50,9 +50,9 @@ s3_client = boto3.client('s3',
 app = Flask(__name__)
 CORS(app)  # Allow CORS for all origins
 
-def log_exception(e, message=""):
-    """Log exceptions with an optional message."""
-    logging.error(f"{message}: {e}", exc_info=True)
+# def log_exception(e, message=""):
+#     """Log exceptions with an optional message."""
+#     logging.error(f"{message}: {e}", exc_info=True)
 
 def upload_to_s3(file_path, bucket_name, s3_key):
     # logging.debug(f"Uploading {file_path} to S3 bucket {bucket_name} with key {s3_key}")
