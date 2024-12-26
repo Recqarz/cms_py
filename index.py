@@ -177,7 +177,7 @@ def get_case_details_and_orders(cnr_number, base_path):
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
 
         # Wait for CNR input field
-        WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "cino")))
+        WebDriverWait(driver, 120).until(EC.presence_of_element_located((By.ID, "cino")))
 
         # Input CNR number
         cnr_input = driver.find_element(By.ID, "cino")
