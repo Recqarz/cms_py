@@ -70,20 +70,17 @@ MAX_RETRIES = 5  # Maximum number of retries for PDF download
 def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_number, cookies):
     retries = 0
     pdf_saved = False
+    pdf_filename = f"order_{index}.pdf"
+    pdf_path = os.path.join(cnr_directory, pdf_filename)
     while retries < MAX_RETRIES and not pdf_saved:
         try:
-            # logging.debug(f"Attempting to download PDF for order {index}, retry {retries + 1}")
             driver.execute_script("arguments[0].click();", order_element)
- 
-            modal_body = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.ID, "modal_order_body")))
-            object_element = modal_body.find_element(By.TAG_NAME, "object")
+            modal_body = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "modal_order_body")))
+            object_element = WebDriverWait(modal_body, 10).until(EC.presence_of_element_located((By.TAG_NAME, "object")))
             pdf_link = object_element.get_attribute("data")
             if not pdf_link:
                 raise ValueError("PDF link not found")
- 
-            pdf_filename = f"order_{index}.pdf"
-            pdf_path = os.path.join(cnr_directory, pdf_filename)
- 
+
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -91,30 +88,23 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
                 ),
                 "Cookie": cookies,
             }
- 
-            response = requests.get(pdf_link, headers=headers, stream=True, timeout=20)
+
+            response = requests.get(pdf_link, headers=headers, stream=True, timeout=15)
             if response.status_code == 200:
                 with open(pdf_path, "wb") as pdf_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         pdf_file.write(chunk)
- 
+
                 s3_key = f"{cnr_number}/intrim_orders/{pdf_filename}"
                 s3_url = upload_to_s3(pdf_path, AWS_S3_BUCKET_NAME, s3_key)
                 os.remove(pdf_path)
-                # logging.info(f"PDF downloaded and uploaded successfully: {s3_url}")
                 return s3_url
             else:
-                # logging.warning(f"Failed to fetch PDF. HTTP status code: {response.status_code}")
                 retries += 1
                 time.sleep(2)
- 
-        except (ElementClickInterceptedException, TimeoutException, ValueError) as e:
-            # log_exception(e, f"Error on attempt {retries + 1} for order {index}")
-            print(f"Error downloading order {index}: {e}")
+        except (ElementClickInterceptedException, TimeoutException, ValueError, requests.RequestException) as e:
             retries += 1
             time.sleep(2)
- 
-    # logging.error(f"Exceeded maximum retries for downloading PDF for order {index}")
     return None
 
 
@@ -255,39 +245,30 @@ def get_case_details_and_orders(cnr_number, base_path):
         # Download Orders
         cnr_directory = os.path.join(base_path, cnr_number, "intrim_orders")  # Save in "intrim_orders" folder
         os.makedirs(cnr_directory, exist_ok=True)
-
-        WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".order_table")))
-        rows = driver.find_elements(By.CSS_SELECTOR, '.order_table tr')
+        
+        try:
+            WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.CSS_SELECTOR, ".order_table")))
+            rows = driver.find_elements(By.CSS_SELECTOR, '.order_table tr')
+        except TimeoutException:
+            rows = []
 
         s3_links = []
-        for index, row in enumerate(rows[1:], start=1):  # Start from the first order
-            try:
-                cells = row.find_elements(By.TAG_NAME, 'td')
-                driver.implicitly_wait(4)
-                order_number = cells[0].text.strip()  # This will get the order number (1)
-                order_date = cells[1].text.strip()     # This will get the order date (27-07-2022)
-
-                order_element = cells[2].find_element(By.TAG_NAME, 'a')
-
-                cookies = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
-
-                # Call download_pdf_with_retry and pass cnr_number
-                s3_url = download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_number, cookies)
-                order_data = {
-                    "order_date": order_date,
-                    "s3_url": s3_url
-                }
-                if s3_url:
-                    s3_links.append(order_data)
-                else:
-                    print(f"Failed to download PDF: {order_element.get_attribute('href')}")
-
-            except Exception as e:
-                print(f"Error downloading order {index}: {e}")
-        
-        # Verify the downloaded PDFs
-        total_orders = len(rows) - 1  # Exclude the header row
-        verify_pdf_downloads(cnr_directory, total_orders)
+        if rows:
+            for index, row in enumerate(rows[1:], start=1):
+                try:
+                    cells = row.find_elements(By.TAG_NAME, 'td')
+                    order_number = cells[0].text.strip()
+                    order_date = cells[1].text.strip()
+                    order_element = cells[2].find_element(By.TAG_NAME, 'a')
+                    cookies = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
+                    s3_url = download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_number, cookies)
+                    if s3_url:
+                        s3_links.append({"order_date": order_date, "s3_url": s3_url})
+                except Exception as e:
+                    print(f"Error downloading order {index}: {e}")
+                    
+            total_orders = len(rows) - 1  # Exclude the header row
+            verify_pdf_downloads(cnr_directory, total_orders)
 
         try:
             if os.path.exists(cnr_directory):
@@ -316,7 +297,7 @@ def get_case_details_and_orders(cnr_number, base_path):
                 os.rmdir(parent_directory)
         except Exception as e:
             print(f"Error while deleting directory {cnr_directory}: {e}")
-
+            
         return {
             'cnr_number': cnr_number,
             'Case Details': details,
@@ -328,7 +309,7 @@ def get_case_details_and_orders(cnr_number, base_path):
             'Case History': case_history,
             'Case Transfer Details': case_transfer_details,
             'status': 'complete',
-            's3_links': s3_links  # Return the S3 links for the downloaded PDFs
+            's3_links': s3_links
         }
 
     except Exception as e:
