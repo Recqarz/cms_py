@@ -156,6 +156,57 @@ def launch_browser(headless=True):
     # logging.info("Browser launched successfully")
     return browser
 
+def extract_table_data(driver, selector):
+    try:
+        time.sleep(2)
+        driver.implicitly_wait(5)
+        section = driver.find_element(By.CSS_SELECTOR, selector)
+        return [[cell.text.strip() for cell in row.find_elements(By.TAG_NAME, "td")] for row in section.find_elements(By.CSS_SELECTOR, "tr")]
+    except NoSuchElementException:
+        return []
+
+def extract_case_details(driver, cnr_number):
+    table_selector = "table.table"
+    
+    try:
+        # Wait until the table is present
+        WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.CSS_SELECTOR, table_selector)))
+
+        # Check if the "Case Code" exists in the table headers
+        has_case_code = driver.execute_script(""" 
+            var table = document.querySelector('table.table');
+            if (!table) return false;
+            return Array.from(table.querySelectorAll('th')).some(th => th.textContent.trim().includes('Case Code'));
+        """)
+
+        if has_case_code:
+            # Extract data from various tables
+            case_details = extract_table_data(driver, "#history_cnr > table.table:first-of-type")
+            acts = extract_table_data(driver, "table.Acts_table")
+            petitioner_advocate = extract_table_data(driver, "#history_cnr > table.table:nth-of-type(2)")
+
+            # Structure the response data
+            petitioner = [petitioner_advocate[0]]
+            respondent = [petitioner_advocate[2]]
+
+            res = {
+                'status': True,
+                'Acts': acts,
+                'Case Details': case_details,
+                'Case History': {},
+                'Case Status': {},
+                'FIR Details': [],
+                'Petitioner and Advocate': petitioner,
+                'Respondent and Advocate': respondent,
+                'Links': [],
+                'cnr_number': cnr_number
+            }
+            return res
+
+    except Exception as ex:
+        print(f"Error checking for table data: {ex}")
+        return {'error': 'An unexpected error occurred.'}
+
 
 def get_case_details_and_orders(cnr_number, base_path):
     # logging.info(f"Fetching case details for CNR number: {cnr_number}")
@@ -315,6 +366,14 @@ def get_case_details_and_orders(cnr_number, base_path):
     except Exception as e:
         print(f"Error in main try block: {e}")  # Print the error for the main block
         # Check for the presence of the "Invalid Captcha" modal after attempting to load case details
+        
+        try:
+            result = extract_case_details(driver, cnr_number)
+            if result.get('status', False):
+                return result  # Return if case details extraction is successful
+        except Exception as extract_exception:
+            print(f"Error while extracting case details: {extract_exception}")
+            
         try:
             WebDriverWait(driver, 5).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".alert.alert-danger-cust"))
