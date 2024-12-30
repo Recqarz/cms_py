@@ -65,22 +65,36 @@ def upload_to_s3(file_path, bucket_name, s3_key):
         # log_exception(e, "Failed to upload to S3")
         raise Exception(f"Failed to upload to S3: {str(e)}")
 
-MAX_RETRIES = 5  # Maximum number of retries for PDF download
 
-def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_number, cookies):
+MAX_RETRIES = 10  # Maximum number of retries for PDF download
+
+def download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies):
     retries = 0
-    pdf_saved = False
     pdf_filename = f"order_{index}.pdf"
     pdf_path = os.path.join(cnr_directory, pdf_filename)
-    while retries < MAX_RETRIES and not pdf_saved:
+    
+    while retries < MAX_RETRIES:
         try:
+            # Re-locate the row and order element to handle stale element reference
+            row = rows[index]  # Re-locate the row by index
+            cells = row.find_elements(By.TAG_NAME, 'td')
+            order_element = cells[2].find_element(By.TAG_NAME, 'a')  # Re-locate the order link
+            
+            # Click on the order element
             driver.execute_script("arguments[0].click();", order_element)
-            modal_body = WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.ID, "modal_order_body")))
-            object_element = WebDriverWait(modal_body, 10).until(EC.presence_of_element_located((By.TAG_NAME, "object")))
+            
+            # Wait for the modal and object containing the PDF link
+            modal_body = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.ID, "modal_order_body"))
+            )
+            object_element = WebDriverWait(modal_body, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "object"))
+            )
             pdf_link = object_element.get_attribute("data")
             if not pdf_link:
                 raise ValueError("PDF link not found")
-
+            
+            # Prepare request headers
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -88,24 +102,33 @@ def download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_num
                 ),
                 "Cookie": cookies,
             }
-
+            
+            # Download the PDF
             response = requests.get(pdf_link, headers=headers, stream=True, timeout=15)
             if response.status_code == 200:
                 with open(pdf_path, "wb") as pdf_file:
                     for chunk in response.iter_content(chunk_size=8192):
                         pdf_file.write(chunk)
-
+                
+                # Upload to S3 and return the URL
                 s3_key = f"{cnr_number}/intrim_orders/{pdf_filename}"
                 s3_url = upload_to_s3(pdf_path, AWS_S3_BUCKET_NAME, s3_key)
                 os.remove(pdf_path)
                 return s3_url
             else:
-                retries += 1
-                time.sleep(2)
+                raise ValueError(f"Failed to download PDF, status code: {response.status_code}")
+        
         except (ElementClickInterceptedException, TimeoutException, ValueError, requests.RequestException) as e:
             retries += 1
-            time.sleep(2)
+            time.sleep(2)  # Retry delay
+        except StaleElementReferenceException:
+            # print(f"Stale element encountered during attempt {retries + 1}. Re-locating the element...")
+            retries += 1  # Increment retry count
+    
+    # If all retries fail, return None
     return None
+
+
 
 
 
@@ -204,7 +227,7 @@ def extract_case_details(driver, cnr_number):
             return res
 
     except Exception as ex:
-        print(f"Error checking for table data: {ex}")
+        # print(f"Error checking for table data: {ex}")
         return {'error': 'An unexpected error occurred.'}
 
 
@@ -225,7 +248,9 @@ def get_case_details_and_orders(cnr_number, base_path):
         time.sleep(1)
 
         # Handle CAPTCHA
-        captcha_element = driver.find_element(By.ID, "captcha_image")
+        captcha_element = WebDriverWait(driver, 2).until(
+        EC.presence_of_element_located((By.ID, "captcha_image"))
+    )
         captcha_path = os.path.join(base_path, "captcha.png")
         captcha_element.screenshot(captcha_path)
         # logging.debug(f"Captcha saved to {captcha_path}")
@@ -312,7 +337,7 @@ def get_case_details_and_orders(cnr_number, base_path):
                     order_date = cells[1].text.strip()
                     order_element = cells[2].find_element(By.TAG_NAME, 'a')
                     cookies = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
-                    s3_url = download_pdf_with_retry(driver, order_element, index, cnr_directory, cnr_number, cookies)
+                    s3_url = download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies)
                     if s3_url:
                         s3_links.append({"order_date": order_date, "s3_url": s3_url})
                 except Exception as e:
@@ -329,7 +354,7 @@ def get_case_details_and_orders(cnr_number, base_path):
                         file_path = os.path.join(root, file)
                         try:
                             os.remove(file_path)  # Delete individual files
-                            print(f"Deleted file: {file_path}")
+                            # print(f"Deleted file: {file_path}")
                         except Exception as e:
                             print(f"Failed to delete file {file_path}: {e}")
 
@@ -337,7 +362,7 @@ def get_case_details_and_orders(cnr_number, base_path):
                     dir_path = os.path.join(root, dir)
                     try:
                         os.rmdir(dir_path)  # Delete empty subdirectories
-                        print(f"Deleted subdirectory: {dir_path}")
+                        # print(f"Deleted subdirectory: {dir_path}")
                     except Exception as e:
                         print(f"Failed to delete directory {dir_path}: {e}")
 
