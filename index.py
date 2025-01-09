@@ -20,6 +20,11 @@ import os
 import requests
 import platform
 import subprocess
+from datetime import datetime
+import shutil
+import shutil
+
+
 # import logging
 
 
@@ -33,7 +38,6 @@ import subprocess
 #         logging.StreamHandler()
 #     ]
 # )
-
 
 # AWS Configuration
 load_dotenv()
@@ -128,10 +132,6 @@ def download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cook
     # If all retries fail, return None
     return None
 
-
-
-
-
 def verify_pdf_downloads(cnr_directory, total_orders):
     missing_pdfs = []
     for i in range(1, total_orders + 1):
@@ -145,7 +145,7 @@ def verify_pdf_downloads(cnr_directory, total_orders):
     # else:
     #     print("All PDFs were successfully downloaded.")
 
-def launch_browser(headless=True):
+def launch_browser(headless=True , profile_dir=None):
     # Determine the Chrome binary path based on the OS
     executable_path = None
     if platform.system() == "Windows":
@@ -162,8 +162,13 @@ def launch_browser(headless=True):
     elif platform.system() == "Darwin":
         executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-    # Configure Chrome options
     options = webdriver.ChromeOptions()
+    if profile_dir:
+        options.add_argument(f"--user-data-dir={profile_dir}")  # Use the provided profile directory
+    else:
+        # Create a temporary directory for the Chrome profile if no profile_dir is provided
+        temp_profile_dir = tempfile.mkdtemp()
+        options.add_argument(f"--user-data-dir={temp_profile_dir}")
     options.binary_location = executable_path
     if headless:
         options.add_argument("--headless=new")
@@ -190,7 +195,6 @@ def extract_table_data(driver, selector):
 
 def extract_case_details(driver, cnr_number):
     table_selector = "table.table"
-    
     try:
         # Wait until the table is present
         WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.CSS_SELECTOR, table_selector)))
@@ -224,17 +228,24 @@ def extract_case_details(driver, cnr_number):
                 'Links': [],
                 'cnr_number': cnr_number
             }
+            driver.quit()
             return res
 
     except Exception as ex:
         # print(f"Error checking for table data: {ex}")
         return {'error': 'An unexpected error occurred.'}
+    
 
+def sanitize_date_string(date_str):
+    # Remove invalid ordinal suffixes like "rd", "st", "nd", "th"
+    date_str = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', date_str)
+    return date_str
 
-def get_case_details_and_orders(cnr_number, base_path):
-    # logging.info(f"Fetching case details for CNR number: {cnr_number}")
+def get_case_details_and_orders(cnr_number, custom_base_path, next_hearing_date):
+    # driver = launch_browser(headless=True)  # You can change headless=True if needed
+    temp_profile_dir = tempfile.mkdtemp()  # Create a temporary directory for the profile
+    driver = launch_browser(headless=True, profile_dir=temp_profile_dir)
 
-    driver = launch_browser(headless=True)  # You can change headless=True if needed
     try:
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
         # logging.debug("Navigated to eCourts website")
@@ -251,7 +262,7 @@ def get_case_details_and_orders(cnr_number, base_path):
         captcha_element = WebDriverWait(driver, 2).until(
         EC.presence_of_element_located((By.ID, "captcha_image"))
     )
-        captcha_path = os.path.join(base_path, "captcha.png")
+        captcha_path = os.path.join(custom_base_path, "captcha.png")
         captcha_element.screenshot(captcha_path)
         # logging.debug(f"Captcha saved to {captcha_path}")
 
@@ -280,7 +291,6 @@ def get_case_details_and_orders(cnr_number, base_path):
         WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table")))
         # logging.info("Case details table loaded successfully")
 
-        # Extract case details
         details = {}
         case_details_section = driver.find_element(By.CSS_SELECTOR, "table.case_details_table")
         for row in case_details_section.find_elements(By.CSS_SELECTOR, "tr"):
@@ -304,11 +314,10 @@ def get_case_details_and_orders(cnr_number, base_path):
         case_status = extract_table_data("table.case_status_table")
         petitioner_advocate = extract_table_data("table.Petitioner_Advocate_table")
         respondent_advocate = extract_table_data("table.Respondent_Advocate_table")
-        acts = extract_table_data("table.acts_table")
         case_history = extract_table_data("table.history_table")
+        acts = extract_table_data("table.acts_table")
         case_transfer_details = extract_table_data("table.transfer_table")
-
-        # Extract FIR Details
+        
         try:
             fir_section = driver.find_element(By.CSS_SELECTOR, "table.FIR_details_table")
             fir_details = {
@@ -317,9 +326,27 @@ def get_case_details_and_orders(cnr_number, base_path):
             }
         except NoSuchElementException:
             fir_details = {}
+        
+        
+        
+        sanitized_date = sanitize_date_string(next_hearing_date)
+
+        
+        next_hearing_date_obj = datetime.strptime(sanitized_date, '%d %B %Y')
+        
+        filtered_case_history = []
+        for entry in case_history:
+            if len(entry) > 2:  # Ensure there are enough columns
+                hearing_date_str = entry[2]  # Assuming the Hearing Date is in the third column
+                try:
+                    hearing_date_obj = datetime.strptime(hearing_date_str, '%d-%m-%Y')
+                    if hearing_date_obj > next_hearing_date_obj:
+                        filtered_case_history.append(entry)
+                except ValueError:
+                    continue
 
         # Download Orders
-        cnr_directory = os.path.join(base_path, cnr_number, "intrim_orders")  # Save in "intrim_orders" folder
+        cnr_directory = os.path.join(custom_base_path, cnr_number, "intrim_orders")  # Save in "intrim_orders" folder
         os.makedirs(cnr_directory, exist_ok=True)
         
         try:
@@ -330,21 +357,39 @@ def get_case_details_and_orders(cnr_number, base_path):
 
         s3_links = []
         if rows:
+            # Parse the next hearing date for comparison
+            sanitized_date = sanitize_date_string(next_hearing_date)
+            next_hearing_date_obj = datetime.strptime(sanitized_date, '%d %B %Y')
             for index, row in enumerate(rows[1:], start=1):
+                order_date_str = None
                 try:
                     cells = row.find_elements(By.TAG_NAME, 'td')
                     order_number = cells[0].text.strip()
-                    order_date = cells[1].text.strip()
+                    order_date_str = cells[1].text.strip()  # Assign value to order_date_str
+                    
+                    if not order_date_str:
+                        print(f"Order {index} has an empty order date. Skipping...")
+                        continue  # Skip this iteration if order date is empty
                     order_element = cells[2].find_element(By.TAG_NAME, 'a')
                     cookies = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
-                    s3_url = download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies)
-                    if s3_url:
-                        s3_links.append({"order_date": order_date, "s3_url": s3_url})
+                    order_date_obj = datetime.strptime(order_date_str, '%d-%m-%Y')
+                    if order_date_obj >= next_hearing_date_obj:
+                        s3_url = download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies)
+                        if s3_url:
+                            s3_links.append({"order_date": order_date_str, "s3_url": s3_url})
                 except Exception as e:
                     print(f"Error downloading order {index}: {e}")
                     
             total_orders = len(rows) - 1  # Exclude the header row
             verify_pdf_downloads(cnr_directory, total_orders)
+            
+        filtered_s3_links = []
+        for link in s3_links:
+            order_date_str = link["order_date"]
+            if order_date_str:  # Check if order_date is not empty
+                order_date_obj = datetime.strptime(order_date_str, '%d-%m-%Y')
+                if order_date_obj >= next_hearing_date_obj:
+                    filtered_s3_links.append(link)
 
         try:
             if os.path.exists(cnr_directory):
@@ -378,14 +423,15 @@ def get_case_details_and_orders(cnr_number, base_path):
             'cnr_number': cnr_number,
             'Case Details': details,
             'Case Status': case_status,
+            'Case Status': case_status,
             'Petitioner and Advocate': petitioner_advocate,
             'Respondent and Advocate': respondent_advocate,
             'Acts': acts,
             'FIR Details': fir_details,
-            'Case History': case_history,
+            'Case History': filtered_case_history,
             'Case Transfer Details': case_transfer_details,
             'status': 'complete',
-            's3_links': s3_links
+            's3_links': filtered_s3_links
         }
 
     except Exception as e:
@@ -393,6 +439,7 @@ def get_case_details_and_orders(cnr_number, base_path):
         # Check for the presence of the "Invalid Captcha" modal after attempting to load case details
         
         try:
+            print("go here")
             result = extract_case_details(driver, cnr_number)
             if result.get('status', False):
                 return result  # Return if case details extraction is successful
@@ -404,10 +451,11 @@ def get_case_details_and_orders(cnr_number, base_path):
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".alert.alert-danger-cust"))
             )
             error_message = driver.find_element(By.CSS_SELECTOR, ".alert.alert-danger-cust").text
+            print("error this",error_message)
             if "Invalid Captcha" in error_message:
                 driver.quit()  # Close the driver
                 time.sleep(1)  # Add a small delay before retrying
-                return get_case_details_and_orders(cnr_number, base_path)  # Retry process for the same CNR number
+                return get_case_details_and_orders(cnr_number, custom_base_path, next_hearing_date)  # Retry process for the same CNR number
         except Exception as inner_exception:
             print(f"Error while checking CAPTCHA: {inner_exception}")
 
@@ -423,37 +471,50 @@ def get_case_details_and_orders(cnr_number, base_path):
             return {'error': 'An unexpected error occurred.'}
     finally:
         driver.quit()
+        shutil.rmtree(temp_profile_dir)
+
         # logging.debug("Browser closed")
 
 
 
 @app.route('/get_case_details_status', methods=['POST'])
 def get_case_details_status():
-    """API endpoint to process a single CNR number."""
+    """API endpoint to process a single CNR number and optional Next Hearing Date."""
     data = request.json
     cnr_number = data.get('cnr_number')  # Expecting a single CNR number
+    next_hearing_date = data.get('Next Hearing Date')  # Capturing next hearing date (now mandatory)
 
+    # Ensure both CNR number and Next Hearing Date are provided
     if not cnr_number or not isinstance(cnr_number, str):
         return jsonify({"error": "Please provide a valid CNR number."}), 400
 
-    if not re.match(r'^[A-Za-z0-9]{16}$', cnr_number):
-        return jsonify({"error": "Invalid CNR number. It must be 16 alphanumeric characters long."}), 200
-    else:
-        try:
-            # Define base_path here
-            custom_base_path = r"./"  # Set the base path for saving files
-            result = get_case_details_and_orders(cnr_number, custom_base_path)
-            # logging.debug(f"Case details result: {result}")
-            return jsonify(result)
+    if not next_hearing_date or not isinstance(next_hearing_date, str):
+        return jsonify({"error": "Please provide a valid Next Hearing Date."}), 400
 
-        except Exception as e:
-            print(f"Unexpected Error: {str(e)}")
-            return jsonify({"error": "An unexpected error occurred. Please try again later."}), 500
-        
+    # Validate CNR number format (must be 16 alphanumeric characters)
+    if not re.match(r'^[A-Za-z0-9]{16}$', cnr_number):
+        return jsonify({"error": "Invalid CNR number. It must be 16 alphanumeric characters long."}), 400
+
+    # Validate the Next Hearing Date format (must be like '30th January 2025')
+    if not re.match(r'^\d{1,2}(st|nd|rd|th)\s\w+\s\d{4}$', next_hearing_date):
+        return jsonify({"error": "Invalid date format for Next Hearing Date. It must be like '30th January 2025'."}), 400
+
+    try:
+        # Define base_path here
+        custom_base_path = r"./"  # Set the base path for saving files
+        result = get_case_details_and_orders(cnr_number, custom_base_path, next_hearing_date)
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"Unexpected Error: {str(e)}")
+        return jsonify({"error": "An unexpected error occurred. Please try again later."}), 500
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "ok", "message": "Api running."}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)
+
 
