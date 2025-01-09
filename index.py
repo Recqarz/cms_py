@@ -20,6 +20,8 @@ import os
 import requests
 import platform
 import subprocess
+import shutil
+
 # import logging
 
 
@@ -145,7 +147,7 @@ def verify_pdf_downloads(cnr_directory, total_orders):
     # else:
     #     print("All PDFs were successfully downloaded.")
 
-def launch_browser(headless=True):
+def launch_browser(headless=True, profile_dir=None):
     # Determine the Chrome binary path based on the OS
     executable_path = None
     if platform.system() == "Windows":
@@ -164,6 +166,12 @@ def launch_browser(headless=True):
 
     # Configure Chrome options
     options = webdriver.ChromeOptions()
+    if profile_dir:
+        options.add_argument(f"--user-data-dir={profile_dir}")  # Use the provided profile directory
+    else:
+        # Create a temporary directory for the Chrome profile if no profile_dir is provided
+        temp_profile_dir = tempfile.mkdtemp()
+        options.add_argument(f"--user-data-dir={temp_profile_dir}")
     options.binary_location = executable_path
     if headless:
         options.add_argument("--headless=new")
@@ -224,7 +232,9 @@ def extract_case_details(driver, cnr_number):
                 'Links': [],
                 'cnr_number': cnr_number
             }
+            driver.quit()
             return res
+            
 
     except Exception as ex:
         # print(f"Error checking for table data: {ex}")
@@ -234,7 +244,8 @@ def extract_case_details(driver, cnr_number):
 def get_case_details_and_orders(cnr_number, base_path):
     # logging.info(f"Fetching case details for CNR number: {cnr_number}")
 
-    driver = launch_browser(headless=True)  # You can change headless=True if needed
+    temp_profile_dir = tempfile.mkdtemp()  # Create a temporary directory for the profile
+    driver = launch_browser(headless=True, profile_dir=temp_profile_dir)
     try:
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
         # logging.debug("Navigated to eCourts website")
@@ -423,6 +434,8 @@ def get_case_details_and_orders(cnr_number, base_path):
             return {'error': 'An unexpected error occurred.'}
     finally:
         driver.quit()
+        shutil.rmtree(temp_profile_dir)
+
         # logging.debug("Browser closed")
 
 
