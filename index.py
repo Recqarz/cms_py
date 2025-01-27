@@ -207,7 +207,7 @@ def launch_browser_with_proxy(proxy, headless=True):
 
         # Initialize WebDriver with seleniumwire_options
         try:
-            driver = webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            driver = webdriver.Chrome( options=chrome_options, seleniumwire_options=seleniumwire_options)
             print("Browser launched successfully")
             return driver
         except Exception as e:
