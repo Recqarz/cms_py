@@ -443,14 +443,14 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
         except Exception as extract_exception:
             print(f"Error while extracting case details: {extract_exception}")
             
-        try:
-            WebDriverWait(driver, 20).until(
-            EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table"))
-        )
-        # Continue execution if the element is found
-        except:
-        # If not found, return the function as requested
-            return get_case_details_and_orders(cnr_number, base_path)
+        # try:
+        #     WebDriverWait(driver, 20).until(
+        #     EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table"))
+        # )
+        # # Continue execution if the element is found
+        # except:
+        # # If not found, return the function as requested
+        #     return get_case_details_and_orders(cnr_number, base_path)
             
         try:
             WebDriverWait(driver, 5).until(
