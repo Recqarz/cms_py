@@ -185,8 +185,8 @@ def launch_browser_with_proxy(proxy, headless=True):
         # Configure Chrome options
         chrome_options.binary_location = executable_path
         if headless:
-            # chrome_options.add_argument("--headless")  # Headless mode
-            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--headless")  # Headless mode
+        chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-popup-blocking")
