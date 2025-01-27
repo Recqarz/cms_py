@@ -1,11 +1,16 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from selenium import webdriver
+from seleniumwire import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from seleniumwire import webdriver as seleniumwire_webdriver  # Import seleniumwire's webdriver
 from selenium.common.exceptions import (
     NoSuchElementException, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
 )
@@ -20,7 +25,7 @@ import os
 import requests
 import platform
 import subprocess
-import shutil
+import threading
 
 # import logging
 
@@ -132,8 +137,6 @@ def download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cook
 
 
 
-
-
 def verify_pdf_downloads(cnr_directory, total_orders):
     missing_pdfs = []
     for i in range(1, total_orders + 1):
@@ -147,45 +150,74 @@ def verify_pdf_downloads(cnr_directory, total_orders):
     # else:
     #     print("All PDFs were successfully downloaded.")
 
-def launch_browser(headless=True, profile_dir=None):
-    # Determine the Chrome binary path based on the OS
-    executable_path = None
-    if platform.system() == "Windows":
-        executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-    elif platform.system() == "Linux":
-        executable_path = "/usr/bin/google-chrome"
-        # Launch Xvfb for Linux headless operation
-        subprocess.Popen(
-            ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"], 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE
-        )
-        os.environ['DISPLAY'] = os.getenv('DISPLAY', ':99')  # Use DISPLAY from environment
-    elif platform.system() == "Darwin":
-        executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+def get_proxy():
+    try:
+        socks_proxy = 'wpkjyjzk-rotate:3o1almvy0q8r@p.webshare.io:80'  # Proxy
+        print("Proxy fetched successfully.")
+        return socks_proxy
+    except Exception as e:
+        print(f"Error fetching proxy: {e}")
+        raise
+    
 
-    # Configure Chrome options
-    options = webdriver.ChromeOptions()
-    if profile_dir:
-        options.add_argument(f"--user-data-dir={profile_dir}")  # Use the provided profile directory
-    else:
-        # Create a temporary directory for the Chrome profile if no profile_dir is provided
-        temp_profile_dir = tempfile.mkdtemp()
-        options.add_argument(f"--user-data-dir={temp_profile_dir}")
-    options.binary_location = executable_path
-    if headless:
-        options.add_argument("--headless=new")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-popup-blocking")
-        options.add_argument("--window-size=1920,1080")
 
-    # Launch browser
-    browser = webdriver.Chrome(options=options)
-    # logging.info("Browser launched successfully")
-    return browser
+def launch_browser_with_proxy(proxy, headless=True): 
+        print("Launching browser...")
+        
+        temp_dir = tempfile.mkdtemp()
+        
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument(f"--user-data-dir={temp_dir}") 
+
+        # Determine the Chrome binary path based on the OS
+        executable_path = None
+        if platform.system() == "Windows":
+            executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        elif platform.system() == "Linux":
+            executable_path = "/usr/bin/google-chrome"
+            subprocess.Popen(
+                ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            os.environ["DISPLAY"] = os.getenv("DISPLAY", ":99")  # Use DISPLAY from environment
+        elif platform.system() == "Darwin":
+            executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+        # Configure Chrome options
+        chrome_options.binary_location = executable_path
+        if headless:
+            chrome_options.add_argument("--headless")  # Headless mode
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        print("This is proxy:", proxy)
+
+        # Add proxy settings if provided
+        seleniumwire_options = {
+            'proxy': {
+                'http': f'http://{proxy}',
+                'https': f'https://{proxy}',
+            }
+        }
+        
+        # Automatically download and manage ChromeDriver
+        service = Service(ChromeDriverManager().install())
+
+        # Initialize WebDriver with seleniumwire_options
+        try:
+            driver = seleniumwire_webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            print("Browser launched successfully")
+            return driver
+        except Exception as e:
+            print(f"Error launching browser: {e}")
+            raise
+
+
 
 def extract_table_data(driver, selector):
     try:
@@ -234,19 +266,20 @@ def extract_case_details(driver, cnr_number):
             }
             driver.quit()
             return res
-            
 
     except Exception as ex:
         # print(f"Error checking for table data: {ex}")
         return {'error': 'An unexpected error occurred.'}
 
 
-def get_case_details_and_orders(cnr_number, base_path):
+def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
+    
+    retry_count = 0
     # logging.info(f"Fetching case details for CNR number: {cnr_number}")
-
-    temp_profile_dir = tempfile.mkdtemp()  # Create a temporary directory for the profile
-    driver = launch_browser(headless=True, profile_dir=temp_profile_dir)
+    proxy = get_proxy() 
+    driver = launch_browser_with_proxy(proxy ,headless=True)  # You can change headless=True if needed
     try:
+        driver.delete_all_cookies()
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
         # logging.debug("Navigated to eCourts website")
 
@@ -290,7 +323,7 @@ def get_case_details_and_orders(cnr_number, base_path):
         # Wait for case details to load
         WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table")))
         # logging.info("Case details table loaded successfully")
-
+    
         # Extract case details
         details = {}
         case_details_section = driver.find_element(By.CSS_SELECTOR, "table.case_details_table")
@@ -411,11 +444,20 @@ def get_case_details_and_orders(cnr_number, base_path):
             print(f"Error while extracting case details: {extract_exception}")
             
         try:
+            WebDriverWait(driver, 20).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table"))
+        )
+        # Continue execution if the element is found
+        except:
+        # If not found, return the function as requested
+            return get_case_details_and_orders(cnr_number, base_path)
+            
+        try:
             WebDriverWait(driver, 5).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".alert.alert-danger-cust"))
             )
             error_message = driver.find_element(By.CSS_SELECTOR, ".alert.alert-danger-cust").text
-            if "Invalid Captcha" in error_message:
+            if "Invalid Captcha" in error_message or "Enter captcha" in error_message:
                 driver.quit()  # Close the driver
                 time.sleep(1)  # Add a small delay before retrying
                 return get_case_details_and_orders(cnr_number, base_path)  # Retry process for the same CNR number
@@ -423,19 +465,33 @@ def get_case_details_and_orders(cnr_number, base_path):
             print(f"Error while checking CAPTCHA: {inner_exception}")
 
         # Check if "This Case Code does not exists" message is available
-        try:
-            record_not_found_message = WebDriverWait(driver, 5).until(
-                EC.visibility_of_element_located((By.CSS_SELECTOR, "div#history_cnr span"))
-            ).text
-            if "This Case Code does not exists" in record_not_found_message:
-                return {'error': 'Invalid_cnr'}
-        except Exception as inner_exception:
-            print(f"Error while checking 'This Case Code does not exists': {inner_exception}")
-            return {'error': 'An unexpected error occurred.'}
+        while retry_count  < max_retries:
+            try:
+                record_not_found_message = WebDriverWait(driver, 5).until(
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, "div#history_cnr span"))
+                ).text
+                
+                if "This Case Code does not exist" in record_not_found_message:
+                    retry_count += 1
+                    print(f"Attempt {retry_count} failed. Retrying...")
+                    continue  # Retry the loop
+                
+                # If we reach here, it means we did not find the error message
+                # Call the function to get case details and orders
+                result = get_case_details_and_orders(cnr_number, base_path)
+                print(result)  # Handle the result as needed
+                break  # Exit the loop if successful
+
+            except Exception as inner_exception:
+                print(f"Error while checking 'This Case Code does not exist': {inner_exception}")
+                break  # Exit the loop on unexpected error
+
+        if retry_count == max_retries:
+            print({'error': 'Invalid_cnr'})
+    
+    
     finally:
         driver.quit()
-        shutil.rmtree(temp_profile_dir)
-
         # logging.debug("Browser closed")
 
 
@@ -456,12 +512,14 @@ def get_case_details_status():
             # Define base_path here
             custom_base_path = r"./"  # Set the base path for saving files
             result = get_case_details_and_orders(cnr_number, custom_base_path)
+            print("this is result", result )
             # logging.debug(f"Case details result: {result}")
             return jsonify(result)
 
         except Exception as e:
             print(f"Unexpected Error: {str(e)}")
             return jsonify({"error": "An unexpected error occurred. Please try again later."}), 500
+        
         
 @app.route('/health', methods=['GET'])
 def health_check():
