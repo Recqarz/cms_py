@@ -203,7 +203,7 @@ def launch_browser_with_proxy(proxy, headless=True):
         }
         
         # Automatically download and manage ChromeDriver
-        service = Service(ChromeDriverManager().install())
+        # service = Service(ChromeDriverManager().install())
 
         # Initialize WebDriver with seleniumwire_options
         try:
