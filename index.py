@@ -1,16 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from seleniumwire import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from seleniumwire import webdriver as seleniumwire_webdriver  # Import seleniumwire's webdriver
+from seleniumwire import webdriver # Import seleniumwire's webdriver
 from selenium.common.exceptions import (
     NoSuchElementException, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
 )
@@ -161,7 +159,7 @@ def get_proxy():
     
 
 
-def launch_browser_with_proxy(proxy, headless=True): 
+def launch_browser_with_proxy(proxy, headless=True, profile_dir=None): 
         print("Launching browser...")
         
         temp_dir = tempfile.mkdtemp()
@@ -184,18 +182,25 @@ def launch_browser_with_proxy(proxy, headless=True):
             os.environ["DISPLAY"] = os.getenv("DISPLAY", ":99")  # Use DISPLAY from environment
         elif platform.system() == "Darwin":
             executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        
+        options = webdriver.ChromeOptions()
+        if profile_dir:
+            options.add_argument(f"--user-data-dir={profile_dir}")  # Use the provided profile directory
+        else:
+            # Create a temporary directory for the Chrome profile if no profile_dir is provided
+            temp_profile_dir = tempfile.mkdtemp()
+            options.add_argument(f"--user-data-dir={temp_profile_dir}")
+        options.binary_location = executable_path
 
         # Configure Chrome options
-        chrome_options.binary_location = executable_path
         if headless:
-            chrome_options.add_argument("--headless")  # Headless mode
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-popup-blocking")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--window-size=1920,1080")
-        print("This is proxy:", proxy)
+            options.add_argument("--headless")  # Headless mode
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--window-size=1920,1080")
 
         # Add proxy settings if provided
         seleniumwire_options = {
@@ -210,7 +215,7 @@ def launch_browser_with_proxy(proxy, headless=True):
 
         # Initialize WebDriver with seleniumwire_options
         try:
-            driver = seleniumwire_webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            driver = webdriver.Chrome(service=service, options=options, seleniumwire_options=seleniumwire_options)
             print("Browser launched successfully")
             return driver
         except Exception as e:
@@ -277,7 +282,9 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
     retry_count = 0
     # logging.info(f"Fetching case details for CNR number: {cnr_number}")
     proxy = get_proxy() 
-    driver = launch_browser_with_proxy(proxy ,headless=True)  # You can change headless=True if needed
+    temp_profile_dir = tempfile.mkdtemp()  # Create a temporary directory for the profile
+
+    driver = launch_browser_with_proxy(proxy ,headless=True,profile_dir=temp_profile_dir)  # You can change headless=True if needed
     try:
         driver.delete_all_cookies()
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
@@ -526,5 +533,5 @@ def health_check():
     return jsonify({"status": "ok", "message": "Api running."}), 200
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8080)
+    app.run(debug=True, port=4080)
 
