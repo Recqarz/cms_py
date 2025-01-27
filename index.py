@@ -158,69 +158,61 @@ def get_proxy():
         raise
     
 
-def launch_browser_with_proxy(proxy, headless=True, profile_dir=None): 
-    print("Launching browser...")
-    
-    temp_dir = tempfile.mkdtemp()
-    
-    # Configure Chrome options
-    chrome_options = Options()
-    chrome_options.add_argument(f"--user-data-dir={temp_dir}") 
+def launch_browser_with_proxy(proxy, headless=True): 
+        print("Launching browser...")
+        
+        temp_dir = tempfile.mkdtemp()
+        
+        # Configure Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument(f"--user-data-dir={temp_dir}") 
 
-    # Determine the Chrome binary path based on the OS
-    executable_path = None
-    if platform.system() == "Windows":
-        executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-    elif platform.system() == "Linux":
-        executable_path = "/usr/bin/google-chrome"
-        subprocess.Popen(
-            ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        os.environ["DISPLAY"] = os.getenv("DISPLAY", ":99")  # Use DISPLAY from environment
-    elif platform.system() == "Darwin":
-        executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    
-    options = webdriver.ChromeOptions()
-    if profile_dir:
-        options.add_argument(f"--user-data-dir={profile_dir}")  # Use the provided profile directory
-    else:
-        temp_profile_dir = tempfile.mkdtemp()
-        options.add_argument(f"--user-data-dir={temp_profile_dir}")
-    options.binary_location = executable_path
+        # Determine the Chrome binary path based on the OS
+        executable_path = None
+        if platform.system() == "Windows":
+            executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+        elif platform.system() == "Linux":
+            executable_path = "/usr/bin/google-chrome"
+            subprocess.Popen(
+                ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            os.environ["DISPLAY"] = os.getenv("DISPLAY", ":99")  # Use DISPLAY from environment
+        elif platform.system() == "Darwin":
+            executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-    # Configure Chrome options
-    if headless:
-        options.add_argument("--headless")  # Headless mode
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--remote-debugging-port=9222")  # Add this line
+        # Configure Chrome options
+        chrome_options.binary_location = executable_path
+        if headless:
+            # chrome_options.add_argument("--headless")  # Headless mode
+            chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-popup-blocking")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--window-size=1920,1080")
+        print("This is proxy:", proxy)
 
-    print("we go heere")
-    # Add proxy settings if provided
-    seleniumwire_options = {
-        'proxy': {
-            'http': f'http://{proxy}',
-            'https': f'https://{proxy}',
+        # Add proxy settings if provided
+        seleniumwire_options = {
+            'proxy': {
+                'http': f'http://{proxy}',
+                'https': f'https://{proxy}',
+            }
         }
-    }
-    
-    # Automatically download and manage ChromeDriver
-    # service = Service(ChromeDriverManager().install())
+        
+        # Automatically download and manage ChromeDriver
+        service = Service(ChromeDriverManager().install())
 
-    # Initialize WebDriver with seleniumwire_options
-    try:
-        driver = webdriver.Chrome( options=options, seleniumwire_options=seleniumwire_options)
-        print("Browser launched successfully")
-        return driver
-    except Exception as e:
-        print(f"Error launching browser: {e}")
-        raise
+        # Initialize WebDriver with seleniumwire_options
+        try:
+            driver = webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            print("Browser launched successfully")
+            return driver
+        except Exception as e:
+            print(f"Error launching browser: {e}")
+            raise
 
 
 
@@ -282,9 +274,8 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
     retry_count = 0
     # logging.info(f"Fetching case details for CNR number: {cnr_number}")
     proxy = get_proxy() 
-    temp_profile_dir = tempfile.mkdtemp()  # Create a temporary directory for the profile
 
-    driver = launch_browser_with_proxy(proxy ,headless=True,profile_dir=temp_profile_dir)  # You can change headless=True if needed
+    driver = launch_browser_with_proxy(proxy ,headless=True)  # You can change headless=True if needed
     try:
         driver.delete_all_cookies()
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
