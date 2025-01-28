@@ -25,12 +25,11 @@ import platform
 import subprocess
 import threading
 
+
 thread_local = threading.local()
 
+
 # import logging
-
-
-
 # Configure Logging
 # logging.basicConfig(
 #     level=logging.DEBUG,
@@ -75,7 +74,7 @@ def upload_to_s3(file_path, bucket_name, s3_key):
 
 MAX_RETRIES = 10  # Maximum number of retries for PDF download
 
-def download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies):
+def download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies, order_date):
     retries = 0
     pdf_filename = f"order_{index}.pdf"
     pdf_path = os.path.join(cnr_directory, pdf_filename)
@@ -118,7 +117,7 @@ def download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cook
                         pdf_file.write(chunk)
                 
                 # Upload to S3 and return the URL
-                s3_key = f"{cnr_number}/intrim_orders/{pdf_filename}"
+                s3_key = f"{cnr_number}/{order_date}/interim_orders/{pdf_filename}"
                 s3_url = upload_to_s3(pdf_path, AWS_S3_BUCKET_NAME, s3_key)
                 os.remove(pdf_path)
                 return s3_url
@@ -150,73 +149,95 @@ def verify_pdf_downloads(cnr_directory, total_orders):
     # else:
     #     print("All PDFs were successfully downloaded.")
 
-def get_proxy():
+def fetch_proxies(api_token, page=1, page_size=1):
+    # Define the API endpoint for fetching proxies
+    api_url = f"https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page={page}&page_size={page_size}"
+    # https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=25
+ 
+    # Set up the headers for authentication
+    headers = {
+        "Authorization": f"Token {api_token}"
+    }
+ 
     try:
-        socks_proxy = 'wpkjyjzk-rotate:3o1almvy0q8r@p.webshare.io:80'  # Proxy
-        print("Proxy fetched successfully.")
-        return socks_proxy
-    except Exception as e:
-        print(f"Error fetching proxy: {e}")
-        raise
+        # Make a GET request to the Webshare API
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status()  # Raise an error for bad responses
+ 
+        # Parse the JSON response
+        data = response.json()
+ 
+        # Check if there are results
+        if data['count'] > 0:
+            proxies = []
+            for proxy in data['results']:
+                # Construct the proxy address
+                proxy_address = f"socks5://{proxy['username']}:{proxy['password']}@{proxy['proxy_address']}:{proxy['port']}"
+                proxies.append(proxy_address)
+            return proxies
+        else:
+            print("No proxies found.")
+            return []
+ 
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred: {http_err}")
+        print(f"Response content: {response.text}")  # Print the response content for debugging
+    except Exception as err:
+        print(f"An error occurred: {err}")
+ 
+    return []
     
 
-def launch_browser_with_proxy(proxy, headless=True): 
-        print("Launching browser...")
-        
-        temp_dir = tempfile.mkdtemp()
-        
-        # Configure Chrome options
-        chrome_options = Options()
-        chrome_options.add_argument(f"--user-data-dir={temp_dir}") 
+def launch_browser_with_proxy(proxy, headless=True):
+    print("Launching browser...")
+    
+    temp_dir = tempfile.mkdtemp()
+    
+    # Configure Chrome options
+    chrome_options = Options()
+    chrome_options.add_argument(f"--user-data-dir={temp_dir}") 
 
-        # Determine the Chrome binary path based on the OS
-        executable_path = None
-        if platform.system() == "Windows":
-            executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-        elif platform.system() == "Linux":
-            executable_path = "/usr/bin/google-chrome"
-            subprocess.Popen(
-                ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            os.environ["DISPLAY"] = os.getenv("DISPLAY", ":99")  # Use DISPLAY from environment
-        elif platform.system() == "Darwin":
-            executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    # Determine the Chrome binary path based on the OS
+    executable_path = None
+    if platform.system() == "Windows":
+        executable_path = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+    elif platform.system() == "Linux":
+        executable_path = "/usr/bin/google-chrome"
+        subprocess.Popen(
+            ["/usr/bin/Xvfb", ":99", "-screen", "0", "1280x720x24"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        os.environ["DISPLAY"] = os.getenv("DISPLAY", ":99")  # Use DISPLAY from environment
+    elif platform.system() == "Darwin":
+        executable_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
-        # Configure Chrome options
-        chrome_options.binary_location = executable_path
-        if headless:
-            # chrome_options.add_argument("--headless")  # Headless mode
-            chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-popup-blocking")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--window-size=1920,1080")
-        print("This is proxy:", proxy)
+    # Configure Chrome options
+    chrome_options.binary_location = executable_path
+    if headless:
+        chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-popup-blocking")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
 
-        # Add proxy settings if provided
-        seleniumwire_options = {
-            'proxy': {
-                'http': f'http://{proxy}',
-                'https': f'https://{proxy}',
-            }
+    # Add proxy settings if provided
+    seleniumwire_options = {
+        'proxy': {
+            'socks5': f'socks5://{proxy}',
         }
-        
-        # Automatically download and manage ChromeDriver
-        # service = Service(ChromeDriverManager().install())
+    }
 
-        # Initialize WebDriver with seleniumwire_options
-        try:
-            driver = webdriver.Chrome( options=chrome_options, seleniumwire_options=seleniumwire_options)
-            print("Browser launched successfully")
-            return driver
-        except Exception as e:
-            print(f"Error launching browser: {e}")
-            raise
-
-
+    # Initialize WebDriver with seleniumwire_options
+    try:
+        driver = webdriver.Chrome(options=chrome_options, seleniumwire_options=seleniumwire_options)
+        print("Browser launched successfully")
+        return driver
+    except Exception as e:
+        print(f"Error launching browser: {e}")
+        raise
 
 def extract_table_data(driver, selector):
     try:
@@ -276,9 +297,15 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
     
     retry_count = 0
     # logging.info(f"Fetching case details for CNR number: {cnr_number}")
-    proxy = get_proxy() 
+    proxies = fetch_proxies("8qc04da49i9eydajihari2vwruqdnrej2ijm3aqk")  # Fetch the list of proxies
+    if not proxies:
+        print("No valid proxies found.")
+        return None
+    print(f"Using proxy: {proxies[0]}")
+    proxy = proxies[0]
 
-    driver = launch_browser_with_proxy(proxy ,headless=True)  # You can change headless=True if needed
+    driver = launch_browser_with_proxy(proxy=proxy, headless=True)  # You can change headless=True if needed
+    captcha_map = {}
     try:
         driver.delete_all_cookies()
         driver.get("https://services.ecourts.gov.in/ecourtindia_v6/")
@@ -296,11 +323,14 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
         captcha_element = WebDriverWait(driver, 2).until(
         EC.presence_of_element_located((By.ID, "captcha_image"))
     )
-        captcha_path = os.path.join(base_path, "captcha.png")
+        captcha_path = os.path.join(base_path, f"captcha_{time.time()}.png")
         captcha_element.screenshot(captcha_path)
+        captcha_map[captcha_path] = captcha_path  # Save the CAPTCHA image path for future reference
         # logging.debug(f"Captcha saved to {captcha_path}")
 
         img = Image.open(captcha_path)
+        
+        
 
         # Set the tesseract path based on the OS
         if platform.system() == 'Windows':  # Windows OS
@@ -319,6 +349,10 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
         captcha_input_field.send_keys(captcha_text)
         search_button = driver.find_element(By.ID, "searchbtn")
         search_button.click()
+        if os.path.exists(captcha_path):
+            os.remove(captcha_path)
+            print(f"CAPTCHA {captcha_path} deleted.")
+            captcha_map[captcha_path] = "solved"
         # logging.info("Captcha submitted and search initiated")
 
         # Wait for case details to load
@@ -382,7 +416,7 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
                     order_date = cells[1].text.strip()
                     order_element = cells[2].find_element(By.TAG_NAME, 'a')
                     cookies = "; ".join([f"{cookie['name']}={cookie['value']}" for cookie in driver.get_cookies()])
-                    s3_url = download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies)
+                    s3_url = download_pdf_with_retry(driver, rows, index, cnr_directory, cnr_number, cookies, order_date)
                     if s3_url:
                         s3_links.append({"order_date": order_date, "s3_url": s3_url})
                 except Exception as e:
@@ -529,7 +563,6 @@ def get_case_details_status():
             print("we go error part direct")
             return jsonify({"error": "An unexpected error occurred. Please try again later."}), 500
         finally:
-            print("we clean the driver")
             cleanup_driver()
             
         
