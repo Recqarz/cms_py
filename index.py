@@ -25,6 +25,8 @@ import platform
 import subprocess
 import threading
 
+thread_local = threading.local()
+
 # import logging
 
 
@@ -185,8 +187,8 @@ def launch_browser_with_proxy(proxy, headless=True):
         # Configure Chrome options
         chrome_options.binary_location = executable_path
         if headless:
-            chrome_options.add_argument("--headless")  # Headless mode
-        chrome_options.add_argument("--no-sandbox")
+            # chrome_options.add_argument("--headless")  # Headless mode
+            chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-popup-blocking")
@@ -261,8 +263,9 @@ def extract_case_details(driver, cnr_number):
                 'Links': [],
                 'cnr_number': cnr_number
             }
-            driver.quit()
+            print("new ui res")
             return res
+        driver.quit()
 
     except Exception as ex:
         # print(f"Error checking for table data: {ex}")
@@ -441,14 +444,14 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
         except Exception as extract_exception:
             print(f"Error while extracting case details: {extract_exception}")
             
-        # try:
-        #     WebDriverWait(driver, 20).until(
-        #     EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table"))
-        # )
-        # # Continue execution if the element is found
-        # except:
-        # # If not found, return the function as requested
-        #     return get_case_details_and_orders(cnr_number, base_path)
+        try:
+            WebDriverWait(driver, 20).until(
+            EC.visibility_of_element_located((By.CSS_SELECTOR, "table.case_details_table"))
+        )
+        # Continue execution if the element is found
+        except:
+        # If not found, return the function as requested
+            return get_case_details_and_orders(cnr_number, base_path)
             
         try:
             WebDriverWait(driver, 5).until(
@@ -487,11 +490,18 @@ def get_case_details_and_orders(cnr_number, base_path,max_retries=3):
         if retry_count == max_retries:
             print({'error': 'Invalid_cnr'})
     
-    
     finally:
         driver.quit()
         # logging.debug("Browser closed")
 
+
+
+
+def cleanup_driver():
+    """Clean up the WebDriver instance for the current thread."""
+    if hasattr(thread_local, 'driver'):
+        thread_local.driver.quit()
+        del thread_local.driver
 
 
 @app.route('/get_case_details_status', methods=['POST'])
@@ -515,8 +525,13 @@ def get_case_details_status():
             return jsonify(result)
 
         except Exception as e:
-            print(f"Unexpected Error: {str(e)}")
+            # print(f"Unexpected Error: {str(e)}")
+            print("we go error part direct")
             return jsonify({"error": "An unexpected error occurred. Please try again later."}), 500
+        finally:
+            print("we clean the driver")
+            cleanup_driver()
+            
         
         
 @app.route('/health', methods=['GET'])
