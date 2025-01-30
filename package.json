@@ -1,0 +1,33 @@
+{
+  "name": "scrapper",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.738.0",
+    "@aws-sdk/s3-request-presigner": "^3.738.0",
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.7.9",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "fs": "^0.0.1-security",
+    "https": "^1.0.0",
+    "os": "^0.1.2",
+    "path": "^0.12.7",
+    "proxy-chain": "^2.5.6",
+    "puppeteer": "^24.1.1",
+    "request-promise": "^4.2.6",
+    "rimraf": "^6.0.1",
+    "selenium-webdriver": "^4.28.1",
+    "socks-proxy-agent": "^8.0.5",
+    "tesseract.js": "^6.0.0"
+  }
+}
