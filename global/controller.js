@@ -11,21 +11,20 @@ const requestPromise = require("request-promise");
 const { SocksProxyAgent } = require("socks-proxy-agent");
 const { uploadFileToS3 } = require("../s2");
 
-
 const getProxy = async () => {
   try {
-    const socksProxy = 'socks5://wpkjyjzk-rotate:3o1almvy0q8r@p.webshare.io:80';
+    const socksProxy = "socks5://wpkjyjzk-rotate:3o1almvy0q8r@p.webshare.io:80";
     // 'socks5://iknzllgs-rotate:r5q66jrdjyzu@p.webshare.io:80'
     const agent = new SocksProxyAgent(new URL(socksProxy));
     const data = await requestPromise({
-      url: 'http://ipv4.webshare.io/',
-      agent: agent
+      url: "http://ipv4.webshare.io/",
+      agent: agent,
     });
-    console.log("Proxy data fetched successfully.");
-    return 'socks5://wpkjyjzk-rotate:3o1almvy0q8r@p.webshare.io:80'; // Return the proxy string
+    // console.log("Proxy data fetched successfully.");
+    return "socks5://wpkjyjzk-rotate:3o1almvy0q8r@p.webshare.io:80"; // Return the proxy string
   } catch (err) {
-    console.error("Error fetching proxy:", err);
-    throw err; // Rethrow the error for further handling
+    console.error("Error fetching proxy:", err?.message);
+    return false; // Rethrow the error for further handling
   }
 };
 
@@ -33,7 +32,13 @@ function delay(time) {
   return new Promise((resolve) => setTimeout(resolve, time));
 }
 
-const downloadPdf = (url, outputPath, cookies) => {
+const downloadPdf = (
+  url,
+  outputPath,
+  cookies,
+  maxRetries = 15,
+  attempt = 1
+) => {
   return new Promise((resolve, reject) => {
     const requestOptions = {
       headers: {
@@ -43,17 +48,38 @@ const downloadPdf = (url, outputPath, cookies) => {
 
     const file = fs.createWriteStream(outputPath);
     https
-      .get(url, requestOptions, (response) => {
+      .get(url, requestOptions, async (response) => {
         if (response.statusCode === 200) {
           response.pipe(file);
           file.on("finish", () => {
             file.close(resolve);
           });
         } else {
-          reject(new Error(`Failed to download file: ${response.statusCode}`));
+          file.close();
+          fs.unlink(outputPath, () => {});
+          if (attempt < maxRetries) {
+            await delay(5000);
+            // console.log(`Retrying... Attempt ${attempt + 1} of ${maxRetries}`);
+            resolve(
+              downloadPdf(url, outputPath, cookies, maxRetries, attempt + 1)
+            );
+          } else {
+            reject(
+              new Error(`Failed to download file: ${response.statusCode}`)
+            );
+          }
         }
       })
-      .on("error", (err) => {
+      .on("error", async (err) => {
+        file.close();
+        fs.unlink(outputPath, () => {});
+        if (attempt < maxRetries) {
+          await delay(5000);
+          resolve(
+            downloadPdf(url, outputPath, cookies, maxRetries, attempt + 1)
+          );
+          // console.log(`Retrying... Attempt ${attempt + 1} of ${maxRetries}`);
+        }
         fs.unlink(outputPath, () => reject(err));
       });
   });
@@ -89,7 +115,7 @@ async function launchBrowser(headless = true, profileDir = null, proxy) {
   }
 
   const anonymizedProxy = await proxyChain.anonymizeProxy(proxy);
-  console.log(`Using proxy: ${anonymizedProxy}`);
+  // console.log(`Using proxy: ${anonymizedProxy}`);
   // Configure Chrome options
   const options = {
     headless: true,
@@ -136,7 +162,7 @@ async function extractTableData(page, selector) {
 
     return rows;
   } catch (error) {
-    console.error("Error extracting table data:", error);
+    console.error("Error extracting table data:", error?.message);
     return [];
   }
 }
@@ -145,10 +171,8 @@ async function extractCaseDetails(page, cnrNumber) {
   const tableSelector = "table.table";
 
   try {
-    // Wait until the table is present
     await page.waitForSelector(tableSelector, { timeout: 25000 });
 
-    // Check if the "Case Code" exists in the table headers
     const hasCaseCode = await page.evaluate(() => {
       const table = document.querySelector("table.table");
       if (!table) return false;
@@ -158,7 +182,6 @@ async function extractCaseDetails(page, cnrNumber) {
     });
 
     if (hasCaseCode) {
-      // Extract data from various tables
       const caseDetails = await extractTableData(
         page,
         "#history_cnr > table.table:first-of-type"
@@ -169,11 +192,10 @@ async function extractCaseDetails(page, cnrNumber) {
         "#history_cnr > table.table:nth-of-type(2)"
       );
 
-      // Structure the response data
-      const petitioner = [petitionerAdvocate[0]];
-      const respondent = [petitionerAdvocate[2]];
+      const petitioner = [petitionerAdvocate[0] || []];
+      const respondent = [petitionerAdvocate[2] || []];
 
-      const res = {
+      return {
         status: true,
         Acts: acts,
         "Case Details": caseDetails,
@@ -185,24 +207,24 @@ async function extractCaseDetails(page, cnrNumber) {
         Links: [],
         cnr_number: cnrNumber,
       };
-
-      return res;
+    } else {
+      return { status: false, error: "Case Code not found in table headers." };
     }
   } catch (error) {
-    console.error("Error extracting case details:", error);
-    return { error: "An unexpected error occurred fot different type." };
+    console.error("Error extracting case details:", error?.message);
+    return { status: false, error: "An unexpected error occurred." };
   }
 }
 
 const closeSeccssionAlelrt = async (page) => {
   await delay(900);
   await page.waitForSelector("#validateError");
- 
+
   const isModalVisible = await page.evaluate(() => {
     const modal = document.getElementById("validateError");
     return modal && modal.style.display === "block";
   });
- 
+
   if (isModalVisible) {
     await page.evaluate(() => {
       closeModel({ modal_id: "validateError" });
@@ -214,7 +236,11 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
   const tempProfileDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "puppeteer-profile-")
   );
-  const proxy = await getProxy();
+  let proxy = false;
+  while (proxy === false) {
+    proxy = await getProxy();
+  }
+
   const browser = await launchBrowser(true, tempProfileDir, proxy);
   const page = await browser.newPage();
   let details = {};
@@ -232,22 +258,22 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
       timeout: 3500,
     });
     const captchaPath = path.join(basePath, `captcha_${cnrNumber}`);
-    await captchaElement.screenshot({ path: captchaPath + '.png' }); // Ensure the file is saved with .png extension
+    await captchaElement.screenshot({ path: captchaPath + ".png" }); // Ensure the file is saved with .png extension
 
     // Perform OCR to get the CAPTCHA text
-    const { data: { text: captchaText } } = await tesseract.recognize(captchaPath + '.png', "eng");
-
+    const {
+      data: { text: captchaText },
+    } = await tesseract.recognize(captchaPath + ".png", "eng");
 
     // Submit CAPTCHA
     await page.type("#fcaptcha_code", captchaText.trim());
     await page.click("#searchbtn");
 
-
-    if (fs.existsSync(captchaPath + '.png')) {
-      fs.unlinkSync(captchaPath + '.png');
-  } else {
+    if (fs.existsSync(captchaPath + ".png")) {
+      fs.unlinkSync(captchaPath + ".png");
+    } else {
       console.warn(`File not found for deletion: ${captchaPath}.png`);
-  }
+    }
 
     try {
       // Wait for case details to load
@@ -357,7 +383,7 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         );
 
         if (orderLink) {
-          console.log(`Clicking on order link for order ${orderNumber}`);
+          // console.log(`Clicking on order link for order ${orderNumber}`);
           await orderLink.click();
 
           try {
@@ -375,7 +401,7 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
                     pdfLink,
                     "https://services.ecourts.gov.in/ecourtindia_v6/"
                   ).href;
-              console.log(`Full PDF link: ${fullPdfLink}`);
+              // console.log(`Full PDF link: ${fullPdfLink}`);
 
               const pdfPath = path.join(
                 cnrDirectory,
@@ -390,7 +416,7 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
               // Download the PDF file
               try {
                 await downloadPdf(fullPdfLink, pdfPath, cookies);
-                console.log(`Downloaded order to ${cnrDirectory}`);
+                // console.log(`Downloaded order to ${cnrDirectory}`);
 
                 // Upload the downloaded PDF to S3
                 const s3Response = await uploadFileToS3(
@@ -403,11 +429,11 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
                   s3_url: s3Response.Location,
                 });
 
-                console.log(`File uploaded to S3: ${s3Response.Location}`);
+                // console.log(`File uploaded to S3: ${s3Response.Location}`);
               } catch (downloadError) {
                 console.error(
                   `Error downloading PDF for order ${orderNumber}:`,
-                  downloadError
+                  downloadError?.message
                 );
               }
 
@@ -421,7 +447,7 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
             }
           } catch (modalError) {
             // console.error("Error waiting for the order modal:", modalError);
-            await closeSeccssionAlelrt(page)
+            await closeSeccssionAlelrt(page);
           }
         } else {
           console.error(`Order link not found for row ${i}`);
@@ -431,7 +457,7 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
       if (fs.existsSync(cnrDirectory)) {
         // Delete only the specific CNR folder, not other child folders
         fs.rmSync(cnrDirectory, { recursive: true, force: true });
-        console.log(`Deleted existing directory: ${cnrDirectory}`);
+        // console.log(`Deleted existing directory: ${cnrDirectory}`);
       } else {
         console.log(`No existing directory found for: ${cnrDirectory}`);
       }
@@ -450,12 +476,14 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         s3_links: s3Links,
       };
     } catch (mainError) {
-      console.error("Error in main try block:", mainError);
+      console.error("Error in main try block:", mainError?.message);
 
       try {
         const result = await extractCaseDetails(page, cnrNumber);
-        if (result.status) {
+        if (result && result.status) {
           return result;
+        } else {
+          console.error("Extracted result is invalid:", result);
         }
       } catch (extractError) {
         console.error("Error while extracting case details:", extractError);
@@ -471,8 +499,11 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         const errorText = await errorMessage.evaluate((el) =>
           el.textContent.replace(/\s+/g, " ").trim()
         );
-        if (errorText.includes("Invalid Captcha") || errorText.includes("Enter Captcha")) {
-          console.log("Invalid Captcha detected. Retrying...");
+        if (
+          errorText.includes("Invalid Captcha") ||
+          errorText.includes("Enter Captcha")
+        ) {
+          // console.log("Invalid Captcha detected. Retrying...");
           await browser.close();
           return getCaseDetailsAndOrders(cnrNumber, basePath);
         }
@@ -493,20 +524,21 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
       } catch (innerError) {
         console.error(
           "Error while checking 'This Case Code does not exists':",
-          innerError
-          
+          innerError?.message
         );
         try {
-          await page.waitForSelector('table.case_details_table', { timeout: 20000 });
-      } catch (error) {
+          await page.waitForSelector("table.case_details_table", {
+            timeout: 20000,
+          });
+        } catch (error) {
           await browser.close();
           return await getCaseDetailsAndOrders(cnrNumber, basePath);
-      }
+        }
         return { error: "An unexpected error occurredss." };
       }
     }
   } catch (error) {
-    console.error("Error in outer try block:", error);
+    console.error("Error in outer try block:", error?.message);
     await browser.close();
     return { error: "An unexpected error occurred." };
   } finally {
