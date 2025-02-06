@@ -232,7 +232,38 @@ const closeSeccssionAlelrt = async (page) => {
   }
 };
 
-async function getCaseDetailsAndOrders(cnrNumber, basePath) {
+function sanitizeDateString(next_hearing_date) {
+    if (typeof next_hearing_date !== 'string') {
+        console.error("Received invalid input:", next_hearing_date);
+        throw new Error('Invalid input: next_hearing_date must be a string');
+    }
+    return next_hearing_date.replace(/(\d+)(st|nd|rd|th)/g, '$1');
+}
+
+function formatDate(next_hearing_date) {
+    if (typeof next_hearing_date !== 'string') {
+        console.error("formatDate received non-string input:", next_hearing_date);
+        throw new Error('Invalid input: next_hearing_date must be a string');
+    }
+    
+    const sanitizedDateStr = sanitizeDateString(next_hearing_date);
+    const parsedDate = new Date(sanitizedDateStr);
+    
+    if (isNaN(parsedDate.getTime())) {
+        console.error("Unable to parse date:", sanitizedDateStr);
+        throw new Error('Invalid date format');
+    }
+    
+    const day = String(parsedDate.getDate()).padStart(2, "0");
+    const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+    const year = parsedDate.getFullYear();
+    
+    return `${day}-${month}-${year}`;
+}
+
+
+
+async function getCaseDetailsAndOrders(cnrNumber, basePath, next_hearing_date) {
   const tempProfileDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "puppeteer-profile-")
   );
@@ -359,6 +390,21 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         firDetails = {};
       }
 
+      const nextHearingDateFormatted = formatDate(next_hearing_date);
+      const nextHearingDateObj = new Date(nextHearingDateFormatted.split("-").reverse().join("-"));
+
+      const filteredCaseHistory = [];
+    for (const entry of caseHistory) {
+        if (entry.length > 2) {
+            const hearingDateStr = entry[2];
+            const hearingDateObj = new Date(hearingDateStr.split("-").reverse().join("-"));
+            
+            if (!isNaN(hearingDateObj.getTime()) && hearingDateObj >= nextHearingDateObj) {
+                filteredCaseHistory.push(entry);
+            }
+        }
+    }
+
       const Allrows = await page.$$eval(".order_table tr", (rows) =>
         rows.map((row) => row.innerText)
       );
@@ -376,8 +422,14 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         let orderDatet = order.match(/\t\s*(.*?)\s*\t/);
         let orderDate = orderDatet[1].trim();
 
+        let orderDateObj = new Date(orderDate.split("-").reverse().join("-"));
+        let next_hearing_date_obj = new Date(
+          formatDate(next_hearing_date).split("-").reverse().join("-")
+        );
+
         await delay(5000); // Wait to ensure page is loaded
 
+        if (orderDateObj >= next_hearing_date_obj) {
         const orderLink = await page.$(
           `.order_table tr:nth-child(${i + 1}) td:nth-child(3) a`
         );
@@ -452,6 +504,8 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         } else {
           console.error(`Order link not found for row ${i}`);
         }
+    }
+
       }
 
       if (fs.existsSync(cnrDirectory)) {
@@ -470,7 +524,7 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         "Respondent and Advocate": respondentAdvocate,
         Acts: acts,
         "FIR Details": firDetails,
-        "Case History": caseHistory,
+        "Case History": filteredCaseHistory,
         "Case Transfer Details": caseTransferDetails,
         status: "complete",
         s3_links: s3Links,
@@ -496,9 +550,11 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
         })
         .catch(() => null);
       if (errorMessage) {
-        const errorText = await errorMessage.evaluate((el) =>
-          el.textContent.replace(/\s+/g, " ").trim()
-        );
+        const errorText = await errorMessage.evaluate((el) => {
+            const text = el.textContent || ''; // Fallback to an empty string if textContent is undefined
+            console.log("Extracted text:", text); // Log the extracted text
+            return String(text).replace(/\s+/g, " ").trim(); // Ensure text is a string
+          });
         if (
           errorText.includes("Invalid Captcha") ||
           errorText.includes("Enter Captcha")
@@ -548,35 +604,59 @@ async function getCaseDetailsAndOrders(cnrNumber, basePath) {
   }
 }
 
-const handleCNRScrap = async (req, res) => {
-  const data = req.body;
-  const cnrNumber = data.cnr_number; // Expecting a single CNR number
+const handleupdatecnr = async (req, res) => {
+  const { cnr_number, next_hearing_date } = req.body;
 
-  if (!cnrNumber || typeof cnrNumber !== "string") {
+  // Validate CNR number
+  if (!cnr_number || typeof cnr_number !== "string") {
     return res
       .status(400)
       .json({ error: "Please provide a valid CNR number." });
   }
 
+  // Validate Next Hearing Date
+  if (!next_hearing_date || typeof next_hearing_date !== "string") {
+    return res
+      .status(400)
+      .json({ error: "Please provide a valid Next Hearing Date." });
+  }
+
+  // Validate CNR number format (must be 16 alphanumeric characters)
   const cnrRegex = /^[A-Za-z0-9]{16}$/;
-  if (!cnrRegex.test(cnrNumber)) {
-    return res.status(200).json({
-      error: "Invalid CNR number. It must be 16 alphanumeric characters long.",
-    });
-  } else {
-    try {
-      // Define base_path here
-      const customBasePath = "./"; // Set the base path for saving files
-      const result = await getCaseDetailsAndOrders(cnrNumber, customBasePath);
-      // console.log(`Case details result: ${JSON.stringify(result)}`);
-      return res.json(result);
-    } catch (e) {
-      console.error(`Unexpected Error: ${e.message}`);
-      return res.status(500).json({
-        error: "An unexpected error occurred. Please try again later.",
+  if (!cnrRegex.test(cnr_number)) {
+    return res
+      .status(400)
+      .json({
+        error:
+          "Invalid CNR number. It must be 16 alphanumeric characters long.",
       });
-    }
+  }
+
+  // Validate the Next Hearing Date format (must be like '30th January 2025')
+  const dateRegex = /^\d{1,2}(st|nd|rd|th)\s\w+\s\d{4}$/;
+  if (!dateRegex.test(next_hearing_date)) {
+    return res
+      .status(400)
+      .json({
+        error:
+          "Invalid date format for Next Hearing Date. It must be like '30th January 2025'.",
+      });
+  }
+
+  try {
+    const customBasePath = "./"; // Set the base path for saving files
+    const result = await getCaseDetailsAndOrders(
+      cnr_number,
+      customBasePath,
+      next_hearing_date
+    );
+    return res.json(result);
+  } catch (error) {
+    console.error(`Unexpected Error: ${error.message}`);
+    return res
+      .status(500)
+      .json({ error: "An unexpected error occurred. Please try again later." });
   }
 };
 
-module.exports = { handleCNRScrap };
+module.exports = { handleupdatecnr };
