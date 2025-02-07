@@ -118,7 +118,7 @@ async function launchBrowser(headless = true, profileDir = null, proxy) {
   // console.log(`Using proxy: ${anonymizedProxy}`);
   // Configure Chrome options
   const options = {
-    headless: false,
+    headless: true,
     executablePath: executablePath,
     args: [
       `--proxy-server=${anonymizedProxy}`,
