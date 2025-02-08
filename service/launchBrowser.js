@@ -53,7 +53,7 @@ const launchBrowser = async (proxy, headless = false) => {
         "--disable-extensions",
         "--disable-popup-blocking",
         "--disable-gpu",
-        // "--headless",
+        "--headless",
       ],
     });
 };
