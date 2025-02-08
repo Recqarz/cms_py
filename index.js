@@ -1,6 +1,7 @@
 require('dotenv').config();  
 const express = require("express");
 const { allRoute } = require('./global/allRoute');
+const { updateCnrDetailsRoute } = require('./routes/updateCnrDetails.route');
 
 const app = express();
 app.use(express.json());
@@ -10,6 +11,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use("/api", allRoute)
+app.use("/api", updateCnrDetailsRoute)
 
 const port = process.env.PORT;
 
