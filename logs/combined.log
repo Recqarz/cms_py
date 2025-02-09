@@ -1,0 +1,4 @@
+[2025-02-09 15:09:00] [INFO]: Deleted captcha file: C:\Users\VikramKumarChoudhary\Desktop\update\cms_py\service\captcha_1739093938339.png
+[2025-02-09 15:09:04] [INFO]: FIR_details_table table not present. : Waiting for selector `table.FIR_details_table` failed: Waiting failed: 900ms exceeded
+[2025-02-09 15:09:04] [INFO]: History order table not found, skipping extractHistoryOrderTable.
+[2025-02-09 15:09:04] [INFO]: Attempt 1:

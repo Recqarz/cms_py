@@ -394,7 +394,7 @@ async function cnrDetailsUpdateCrawler(payload) {
       "table.Respondent_Advocate_table"
     );
     const acts = await extractTableData(page, "table.acts_table");
-    // const caseTransferDetails = await extractTableData(page,"table.transfer_table");
+    const caseTransferDetails = await extractTableData(page,"table.transfer_table");
     const caseHistory = await extractTableData(page, "table.history_table");
     const firDetails = await extractFirDetails(page);
  
@@ -485,10 +485,9 @@ async function cnrDetailsUpdateCrawler(payload) {
       Acts: acts,
       "FIR Details": firDetails,
       "Case History": filteredCaseHistory,
-      //   "Case Transfer Details": caseTransferDetails,
+        "Case Transfer Details": caseTransferDetails,
       status: "complete",
       s3_links: allOrders,
-      // finalOrders: finalOrder || [],
     };
  
     return { status: true, cnrDetails: finalRes };
