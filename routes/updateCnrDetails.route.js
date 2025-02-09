@@ -35,7 +35,9 @@ updateCnrDetailsRoute.post("/update-cnr-details", async (req, res) => {
 
       if (
         response.message == "captchaNotFound" ||
-        response.message == "inValidCaptcha"
+        response.message == "inValidCaptcha" ||
+        response.message ==
+          "Waiting for selector `table.case_details_table` failed: Waiting failed: 4000ms exceeded"
       ) {
         attempts++;
       } else {

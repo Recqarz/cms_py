@@ -446,8 +446,18 @@ async function cnrDetailsUpdateCrawler(payload) {
     const historyOrderTableExists = await page.$(
       "#history_cnr .order_table:last-of-type"
     );
+    const h2Elements = await page.$$('h2.h2class');
  
-    if (historyOrderTableExists) {
+    let hasFinalOrdersJudgements = false;
+     
+    for (const h2Element of h2Elements) {
+      const h2Text = await h2Element.evaluate(el => el.textContent.trim());
+      if (h2Text === 'Final Orders / Judgements') {
+        hasFinalOrdersJudgements = true;
+        break; // Exit the loop if we find a match
+      }
+    }
+    if (historyOrderTableExists && hasFinalOrdersJudgements) {
       try {
         finalOrder = await extractFinalOrder(
           page,
