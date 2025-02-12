@@ -26,7 +26,7 @@ updateCnrDetailsRoute.post("/update-cnr-details", async (req, res) => {
     };
 
     let attempts = 0;
-    let maxAttempts = 20;
+    let maxAttempts = 9999;
     let response;
 
     while (attempts < maxAttempts) {

@@ -408,15 +408,28 @@ async function cnrDetailsUpdateCrawler(payload) {
     if (Array.isArray(caseHistory) && caseHistory.length > 0) {
       for (const entry of caseHistory) {
         if (entry.length > 2) {
-          const hearingDateStr = entry[2];
-          const hearingDateObj = new Date(
-            hearingDateStr.split("-").reverse().join("-")
-          );
- 
-          if (
-            !isNaN(hearingDateObj.getTime()) &&
-            hearingDateObj >= nextHearingDateObj
-          ) {
+          const hearingDateStr = entry[1]?.trim(); // Extracting and trimming the date
+    
+          // Skip if the date is empty
+          if (!hearingDateStr) {
+            // console.log("Skipping entry with empty hearing date:", entry);
+            // filteredCaseHistory.push(entry);
+            // console.log("Pushed empty hearing date:", entry);
+            continue;
+          }
+    
+          // Check for valid date format (DD-MM-YYYY)
+          if (!/^\d{2}-\d{2}-\d{4}$/.test(hearingDateStr)) {
+            console.log("Skipping invalid date:", hearingDateStr);
+            continue;
+          }
+    
+          const hearingDateObj = new Date(hearingDateStr.split("-").reverse().join("-"));
+          
+          // console.log("hearingDateObj:::", hearingDateObj);
+          // console.log("nextHearingDateObj:::", nextHearingDateObj);
+    
+          if (!isNaN(hearingDateObj.getTime()) && hearingDateObj >= nextHearingDateObj) {
             filteredCaseHistory.push(entry);
           }
         }
@@ -487,7 +500,9 @@ async function cnrDetailsUpdateCrawler(payload) {
       "Case History": filteredCaseHistory,
         "Case Transfer Details": caseTransferDetails,
       status: "complete",
-      s3_links: allOrders,
+      s3_links: s3Links || [],
+      finalOrders:finalOrder || [],
+      allOrders:allOrders || [],
     };
  
     return { status: true, cnrDetails: finalRes };
